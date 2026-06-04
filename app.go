@@ -13,9 +13,10 @@ import (
 )
 
 type App struct {
-	ctx   context.Context
-	eng   *engine.Engine
-	store *engine.VectorStore
+	ctx     context.Context
+	eng     *engine.Engine
+	store   *engine.VectorStore
+	watcher *engine.FileWatcher
 }
 
 func NewApp() *App {
@@ -27,6 +28,11 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	if a.watcher != nil {
+		if err := a.watcher.Stop(); err != nil {
+			fmt.Printf("error stopping watcher: %v\n", err)
+		}
+	}
 	if a.eng != nil {
 		a.eng.Close()
 	}
@@ -76,6 +82,7 @@ func (a *App) InitEngine(cfg EngineConfig) error {
 
 // IndexFiles embeds every file in paths and stores the result vectors.
 // Progress events ("index:chunk") are emitted after each chunk is stored.
+// Starts the file watcher on first call to auto-reindex on file changes.
 func (a *App) IndexFiles(paths []string) error {
 	if a.eng == nil {
 		return fmt.Errorf("engine not initialised — call InitEngine first")
@@ -95,6 +102,18 @@ func (a *App) IndexFiles(paths []string) error {
 		})
 	}
 	wailsruntime.EventsEmit(a.ctx, "index:done", n)
+
+	// Start watcher on first indexing (if not already started)
+	if a.watcher == nil && len(paths) > 0 {
+		watcher, err := engine.StartWatcher(a.ctx, paths, a.eng, a.store)
+		if err != nil {
+			fmt.Printf("warning: failed to start file watcher: %v\n", err)
+		} else {
+			a.watcher = watcher
+			wailsruntime.EventsEmit(a.ctx, "watcher:started", nil)
+		}
+	}
+
 	return nil
 }
 
