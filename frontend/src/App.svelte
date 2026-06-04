@@ -31,15 +31,12 @@
     try {
       error = ''
       message = ''
-      const result = await InitEngine({
+      await InitEngine({
         libraryPath,
         modelPath,
         vocabPath,
         workers,
       })
-      if (result) {
-        throw new Error(result)
-      }
       message = 'Engine initialized successfully'
     } catch (e: any) {
       error = `Init failed: ${e.message || e}`
