@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { InitEngine, IndexFiles, Search, StoreSize } from '../wailsjs/go/main/App.js'
+  import { InitEngine, IndexFiles, Search, StoreSize, GenerateAnswer } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
 
   interface SearchResult {
@@ -21,6 +21,8 @@
   let query: string = ''
   let results: SearchResult[] = []
   let searching: boolean = false
+  let generating: boolean = false
+  let answer: string = ''
   let indexing: boolean = false
   let watcherActive: boolean = false
   let reindexing: boolean = false
@@ -105,6 +107,7 @@
     try {
       error = ''
       message = ''
+      answer = '' // Clear previous answer
       searching = true
       const res = await Search(query, topK)
       results = res || []
@@ -118,6 +121,26 @@
       error = `Search failed: ${e.message || e}`
     } finally {
       searching = false
+    }
+  }
+
+  async function generateAnswerFromSearch() {
+    if (!query.trim()) {
+      error = 'Please perform a search first'
+      return
+    }
+
+    try {
+      error = ''
+      generating = true
+      const res = await GenerateAnswer(query, topK)
+      answer = res
+      message = 'Answer generated successfully'
+    } catch (e: any) {
+      error = `Generation failed: ${e.message || e}`
+      answer = ''
+    } finally {
+      generating = false
     }
   }
 
@@ -221,8 +244,21 @@
         <button on:click={performSearch} disabled={searching} class="btn btn-primary">
           {searching ? 'Searching...' : 'Search'}
         </button>
+        {#if results.length > 0}
+          <button on:click={generateAnswerFromSearch} disabled={generating} class="btn btn-secondary">
+            {generating ? '⏳ Generating...' : '✨ Answer'}
+          </button>
+        {/if}
       </div>
     </section>
+
+    <!-- Generated Answer -->
+    {#if answer}
+      <section class="panel panel-answer">
+        <h2>Generated Answer</h2>
+        <div class="answer-body">{answer}</div>
+      </section>
+    {/if}
 
     <!-- Results -->
     {#if results.length > 0}
@@ -459,6 +495,28 @@
     color: #90caf9;
     word-break: break-word;
     max-width: 250px;
+  }
+
+  .panel-answer {
+    border-color: rgba(129, 199, 132, 0.35);
+    background: rgba(27, 60, 30, 0.35);
+  }
+
+  .answer-body {
+    line-height: 1.7;
+    white-space: pre-wrap;
+    color: #c8e6c9;
+    font-size: 0.95rem;
+  }
+
+  .btn-secondary {
+    background: linear-gradient(135deg, #66bb6a 0%, #43a047 100%);
+    color: white;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 187, 106, 0.4);
   }
 
   .alert {
