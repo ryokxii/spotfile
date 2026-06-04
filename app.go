@@ -17,6 +17,7 @@ type App struct {
 	eng     *engine.Engine
 	store   *engine.VectorStore
 	watcher *engine.FileWatcher
+	llm     *engine.LLM
 }
 
 func NewApp() *App {
@@ -31,6 +32,11 @@ func (a *App) shutdown(_ context.Context) {
 	if a.watcher != nil {
 		if err := a.watcher.Stop(); err != nil {
 			fmt.Printf("error stopping watcher: %v\n", err)
+		}
+	}
+	if a.llm != nil {
+		if err := a.llm.Close(); err != nil {
+			fmt.Printf("error closing LLM: %v\n", err)
 		}
 	}
 	if a.eng != nil {
@@ -77,7 +83,18 @@ func (a *App) InitEngine(cfg EngineConfig) error {
 		VocabPath:   cfg.VocabPath,
 		Workers:     cfg.Workers,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Initialize LLM (gracefully handles missing model)
+	llmModelPath := filepath.Join(spotfileDir(), "model.gguf")
+	a.llm, _ = engine.NewLLM(engine.LLMConfig{
+		ModelPath: llmModelPath,
+		ModelType: "llama",
+	})
+
+	return nil
 }
 
 // IndexFiles embeds every file in paths and stores the result vectors.
@@ -127,6 +144,38 @@ func (a *App) Search(query string, topK int) ([]engine.SearchResult, error) {
 		return nil, err
 	}
 	return a.store.Search(vec, topK), nil
+}
+
+// GenerateAnswer searches for relevant chunks and uses LLM to generate an answer.
+func (a *App) GenerateAnswer(query string, topK int) (string, error) {
+	if a.eng == nil {
+		return "", fmt.Errorf("engine not initialised — call InitEngine first")
+	}
+	if a.llm == nil {
+		return "", fmt.Errorf("LLM not initialized")
+	}
+
+	// Search for relevant chunks
+	results, err := a.Search(query, topK)
+	if err != nil {
+		return "", fmt.Errorf("search failed: %w", err)
+	}
+
+	if len(results) == 0 {
+		return "No relevant documents found to generate an answer from.", nil
+	}
+
+	// Format context from search results
+	context := engine.FormatContext(results, 2000)
+
+	// Generate answer using LLM
+	systemPrompt := "You are a helpful search assistant. Answer based on the provided documents. If information is not in the documents, say so clearly."
+	answer, err := a.llm.Generate(a.ctx, systemPrompt, query, context)
+	if err != nil {
+		return "", fmt.Errorf("generation failed: %w", err)
+	}
+
+	return answer, nil
 }
 
 // StoreSize returns the number of indexed chunks (useful for UI status).
