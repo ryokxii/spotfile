@@ -59,6 +59,11 @@ func (a *App) InitEngine(cfg EngineConfig) error {
 		cfg.VocabPath = filepath.Join(spotfileDir(), "vocab.txt")
 	}
 
+	// Ensure .spotfile directory exists
+	if err := os.MkdirAll(spotfileDir(), 0755); err != nil {
+		return fmt.Errorf("create spotfile dir: %w", err)
+	}
+
 	var err error
 	a.eng, err = engine.New(engine.Config{
 		LibraryPath: cfg.LibraryPath,
