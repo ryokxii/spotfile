@@ -17,6 +17,7 @@ const (
 	maxChunkWords = 400 // leaves headroom for [CLS]/[SEP] plus subword expansion
 	chunkOverlap  = 50
 	defaultBatchSize = 32 // embed 32 chunks per ONNX call
+	maxDocBuffer = 256 // limit document buffer to prevent memory bloat with 100K+ files
 )
 
 // inputNames matches the bge-small-en-v1.5 ONNX export order.
@@ -140,7 +141,11 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			path string
 			text string
 		}
-		docs := make(chan doc, len(paths))
+		docBufSize := len(paths)
+		if docBufSize > maxDocBuffer {
+			docBufSize = maxDocBuffer
+		}
+		docs := make(chan doc, docBufSize)
 		var readWg sync.WaitGroup
 		for _, p := range paths {
 			readWg.Add(1)
@@ -168,7 +173,7 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			chunkIdx int
 			text     string
 		}
-		chunks := make(chan chunk, 128)
+		chunks := make(chan chunk, defaultBatchSize*4)
 		go func() {
 			defer close(chunks)
 			for d := range docs {
