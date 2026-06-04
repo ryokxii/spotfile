@@ -81,6 +81,9 @@ func (a *App) IndexFiles(paths []string) error {
 		return fmt.Errorf("engine not initialised — call InitEngine first")
 	}
 
+	// Sort by modification time (recent files first)
+	paths = engine.SortPathsByModTime(paths)
+
 	chunks := a.eng.IndexFiles(a.ctx, paths)
 	var n int
 	for chunk := range chunks {

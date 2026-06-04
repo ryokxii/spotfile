@@ -16,6 +16,8 @@ const (
 	MaxSeqLen     = 512
 	maxChunkWords = 400 // leaves headroom for [CLS]/[SEP] plus subword expansion
 	chunkOverlap  = 50
+	defaultBatchSize = 32 // embed 32 chunks per ONNX call
+	maxDocBuffer = 256 // limit document buffer to prevent memory bloat with 100K+ files
 )
 
 // inputNames matches the bge-small-en-v1.5 ONNX export order.
@@ -139,7 +141,11 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			path string
 			text string
 		}
-		docs := make(chan doc, len(paths))
+		docBufSize := len(paths)
+		if docBufSize > maxDocBuffer {
+			docBufSize = maxDocBuffer
+		}
+		docs := make(chan doc, docBufSize)
 		var readWg sync.WaitGroup
 		for _, p := range paths {
 			readWg.Add(1)
@@ -167,7 +173,7 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			chunkIdx int
 			text     string
 		}
-		chunks := make(chan chunk, 128)
+		chunks := make(chan chunk, defaultBatchSize*4)
 		go func() {
 			defer close(chunks)
 			for d := range docs {
@@ -181,22 +187,55 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			}
 		}()
 
-		// Stage 3: embed chunks in parallel, bounded to Workers goroutines
+		// Stage 3: embed chunks in batches, bounded to Workers goroutines
 		var embedWg sync.WaitGroup
 		for range e.cfg.Workers {
 			embedWg.Add(1)
 			go func() {
 				defer embedWg.Done()
+				batch := make([]chunk, 0, defaultBatchSize)
 				for c := range chunks {
-					vec, err := e.Embed(ctx, c.text)
-					if err != nil {
-						log.Printf("index: embed chunk %d of %s: %v", c.chunkIdx, c.docPath, err)
+					batch = append(batch, c)
+					if len(batch) < defaultBatchSize {
 						continue
 					}
-					select {
-					case out <- EmbeddedChunk{DocPath: c.docPath, ChunkIdx: c.chunkIdx, Text: c.text, Embedding: vec}:
-					case <-ctx.Done():
+					// Process batch
+					texts := make([]string, len(batch))
+					for i, ch := range batch {
+						texts[i] = ch.text
+					}
+					vecs, err := e.BatchEmbed(texts)
+					if err != nil {
+						log.Printf("index: batch embed failed: %v", err)
+						batch = batch[:0]
+						continue
+					}
+					for i, ch := range batch {
+						select {
+						case out <- EmbeddedChunk{DocPath: ch.docPath, ChunkIdx: ch.chunkIdx, Text: ch.text, Embedding: vecs[i]}:
+						case <-ctx.Done():
+							return
+						}
+					}
+					batch = batch[:0]
+				}
+				// Process remaining chunks in batch
+				if len(batch) > 0 {
+					texts := make([]string, len(batch))
+					for i, ch := range batch {
+						texts[i] = ch.text
+					}
+					vecs, err := e.BatchEmbed(texts)
+					if err != nil {
+						log.Printf("index: batch embed failed: %v", err)
 						return
+					}
+					for i, ch := range batch {
+						select {
+						case out <- EmbeddedChunk{DocPath: ch.docPath, ChunkIdx: ch.chunkIdx, Text: ch.text, Embedding: vecs[i]}:
+						case <-ctx.Done():
+							return
+						}
 					}
 				}
 			}()
