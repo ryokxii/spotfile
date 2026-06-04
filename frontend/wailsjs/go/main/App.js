@@ -21,3 +21,7 @@ export function Search(arg1, arg2) {
 export function StoreSize() {
   return window['go']['main']['App']['StoreSize']();
 }
+
+export function GenerateAnswer(arg1, arg2) {
+  return window['go']['main']['App']['GenerateAnswer'](arg1, arg2);
+}

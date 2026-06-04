@@ -12,3 +12,5 @@ export function InitEngine(arg1:main.EngineConfig):Promise<void>;
 export function Search(arg1:string,arg2:number):Promise<Array<engine.SearchResult>>;
 
 export function StoreSize():Promise<number>;
+
+export function GenerateAnswer(arg1:string,arg2:number):Promise<string>;
