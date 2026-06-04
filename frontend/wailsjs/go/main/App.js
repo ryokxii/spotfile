@@ -5,3 +5,19 @@
 export function Greet(arg1) {
   return window['go']['main']['App']['Greet'](arg1);
 }
+
+export function IndexFiles(arg1) {
+  return window['go']['main']['App']['IndexFiles'](arg1);
+}
+
+export function InitEngine(arg1) {
+  return window['go']['main']['App']['InitEngine'](arg1);
+}
+
+export function Search(arg1, arg2) {
+  return window['go']['main']['App']['Search'](arg1, arg2);
+}
+
+export function StoreSize() {
+  return window['go']['main']['App']['StoreSize']();
+}
