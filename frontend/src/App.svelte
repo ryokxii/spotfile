@@ -22,6 +22,8 @@
   let results: SearchResult[] = []
   let searching: boolean = false
   let indexing: boolean = false
+  let watcherActive: boolean = false
+  let reindexing: boolean = false
   let error: string = ''
   let message: string = ''
 
@@ -69,6 +71,22 @@
         message = `Indexed ${total} chunks successfully`
         const store = StoreSize()
         message += ` (Store now contains ${store} total chunks)`
+      })
+
+      // Listen for watcher events
+      EventsOn('watcher:started', () => {
+        watcherActive = true
+        message += ' (File watcher active)'
+      })
+
+      EventsOn('watcher:reindexing', (data: any) => {
+        reindexing = true
+        message = `File changed, re-indexing: ${data.path}`
+      })
+
+      EventsOn('watcher:done', () => {
+        reindexing = false
+        message = 'Re-indexing complete'
       })
 
       await IndexFiles(paths)
@@ -174,6 +192,17 @@
               style={`width: ${totalFiles > 0 ? (indexedCount / totalFiles) * 100 : 0}%`}
             />
           </div>
+        </div>
+      {/if}
+      {#if watcherActive}
+        <div class="watcher-status">
+          <p class="watcher-indicator">
+            {#if reindexing}
+              🔄 Re-indexing...
+            {:else}
+              ✅ File watcher active
+            {/if}
+          </p>
         </div>
       {/if}
     </section>
@@ -378,6 +407,21 @@
     height: 100%;
     background: linear-gradient(90deg, #42a5f5 0%, #64b5f6 100%);
     transition: width 0.3s ease;
+  }
+
+  .watcher-status {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: rgba(76, 175, 80, 0.1);
+    border-left: 3px solid #4caf50;
+    border-radius: 4px;
+  }
+
+  .watcher-indicator {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #81c784;
+    font-weight: 500;
   }
 
   .results-table {
