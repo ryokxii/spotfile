@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"math"
 	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
