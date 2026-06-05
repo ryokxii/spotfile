@@ -8,15 +8,17 @@ import (
 type EmbeddedChunk struct {
 	DocPath   string
 	ChunkIdx  int
+	PageNum   int // 1-based page number for PDFs; 0 for non-PDF files
 	Text      string
 	Embedding []float32
 }
 
 type SearchResult struct {
-	DocPath  string    `json:"docPath"`
-	ChunkIdx int       `json:"chunkIdx"`
-	Text     string    `json:"text"`
-	Score    float32   `json:"score"`
+	DocPath  string  `json:"docPath"`
+	ChunkIdx int     `json:"chunkIdx"`
+	PageNum  int     `json:"pageNum"`
+	Text     string  `json:"text"`
+	Score    float32 `json:"score"`
 }
 
 type VectorStore struct {
@@ -62,6 +64,7 @@ func (vs *VectorStore) Search(query []float32, topK int) []SearchResult {
 		results[i] = SearchResult{
 			DocPath:  candidates[i].c.DocPath,
 			ChunkIdx: candidates[i].c.ChunkIdx,
+			PageNum:  candidates[i].c.PageNum,
 			Text:     candidates[i].c.Text,
 			Score:    candidates[i].score,
 		}
