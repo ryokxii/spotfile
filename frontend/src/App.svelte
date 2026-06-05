@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { fade } from 'svelte/transition'
-  import { Search, GenerateAnswer, StoreSize } from '../wailsjs/go/main/App.js'
+  import { Search, GenerateAnswer, SelectFolder, IndexFolder } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import PDFViewer from './PDFViewer.svelte'
   import StatusBar from './StatusBar.svelte'
-  import SettingsModal from './SettingsModal.svelte'
 
   interface SearchResult {
     docPath: string
@@ -18,15 +17,19 @@
   type Phase = 'idle' | 'loading' | 'results' | 'error'
   let phase: Phase = 'idle'
 
+  // Engine state — driven by events from startup auto-init
   let engineReady = false
-  let showSettings = false
-  let storeChunks = 0
+  let engineError = ''
+  let hasFiles = false
+  let selectedFolder = ''
 
+  // Search
   let query = ''
   let results: SearchResult[] = []
   let answer = ''
   let searchError = ''
 
+  // Indexing (forwarded to StatusBar)
   let indexing = false
   let indexedCount = 0
   let totalFiles = 0
@@ -34,8 +37,10 @@
   let watcherActive = false
   let reindexing = false
 
+  // PDF viewer
   let pdfViewerPath = ''
   let pdfViewerPage = 1
+  let pdfViewerHighlight = ''
   let showPDFViewer = false
 
   const topK = 5
@@ -46,31 +51,52 @@
       .map(r => r.docPath)
   )]
 
-  $: hint = engineReady
-    ? phase === 'idle' ? 'Ready — type your question and press Enter'
+  $: hint =
+    engineError ? engineError.split('\n')[0]
+    : !engineReady ? 'Starting up…'
+    : phase === 'idle' && !hasFiles ? 'Choose a folder to get started'
+    : phase === 'idle' ? 'Ready — type your question and press Enter'
     : phase === 'loading' ? 'Searching…'
     : phase === 'error' ? searchError
     : ''
-    : 'Configure the engine to get started'
 
   onMount(() => {
+    EventsOn('engine:ready', () => { engineReady = true })
+    EventsOn('engine:error', (msg: string) => { engineError = msg })
+    EventsOn('index:start', (data: any) => {
+      indexing = true
+      indexedCount = 0
+      totalFiles = data.total
+      selectedFolder = data.dir
+    })
     EventsOn('index:chunk', (data: any) => {
       indexedCount = data.total
       currentFile = data.path
     })
-    EventsOn('index:done', async () => {
+    EventsOn('index:done', () => {
       indexing = false
       currentFile = ''
-      storeChunks = await StoreSize()
+      hasFiles = true
     })
     EventsOn('watcher:started', () => { watcherActive = true })
     EventsOn('watcher:reindexing', (data: any) => { reindexing = true; currentFile = data.path })
     EventsOn('watcher:done', () => { reindexing = false; currentFile = '' })
   })
 
+  async function pickFolder() {
+    if (!engineReady) return
+    try {
+      const dir = await SelectFolder()
+      if (!dir) return
+      await IndexFolder(dir)
+    } catch (e: any) {
+      engineError = e?.message || String(e)
+    }
+  }
+
   async function search() {
     const q = query.trim()
-    if (!q || !engineReady || phase === 'loading') return
+    if (!q || !engineReady || !hasFiles || phase === 'loading') return
 
     phase = 'loading'
     results = []
@@ -95,12 +121,13 @@
     if (result.docPath.toLowerCase().endsWith('.pdf')) {
       pdfViewerPath = result.docPath
       pdfViewerPage = result.pageNum > 0 ? result.pageNum : 1
+      pdfViewerHighlight = result.text
       showPDFViewer = true
     }
   }
 
-  function getFirstPage(pdf: string): number {
-    return results.find(r => r.docPath === pdf)?.pageNum || 1
+  function getFirstResult(pdf: string): SearchResult | undefined {
+    return results.find(r => r.docPath === pdf)
   }
 
   function filename(path: string) {
@@ -112,19 +139,12 @@
     parts.pop()
     return parts.join('/') || path
   }
-
-  function handleIndexStart(e: CustomEvent<{ paths: string[]; total: number }>) {
-    indexing = true
-    indexedCount = 0
-    totalFiles = e.detail.total
-  }
 </script>
 
 <!-- ── Root ───────────────────────────────────────────────────── -->
 <div class="root">
   <div class="column" class:in-results={phase === 'results'}>
 
-    <!-- Logo (only shown when idle) -->
     {#if phase === 'idle'}
       <div class="logo-area" transition:fade={{ duration: 180 }}>
         <svg class="logo-icon" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -149,8 +169,8 @@
           type="text"
           class="search-input"
           bind:value={query}
-          placeholder="Search your files…"
-          disabled={phase === 'loading'}
+          placeholder={hasFiles ? 'Search your files…' : 'Index a folder to start searching…'}
+          disabled={phase === 'loading' || !engineReady || !hasFiles}
           on:keydown={(e) => e.key === 'Enter' && search()}
           autocomplete="off"
           spellcheck="false"
@@ -158,30 +178,58 @@
 
         {#if phase === 'loading'}
           <span class="spinner" aria-label="Searching" role="status" />
-        {:else}
+        {:else if engineReady}
+          <!-- Folder picker button -->
           <button
             class="icon-btn"
-            title="Settings"
-            on:click={() => (showSettings = true)}
-            aria-label="Open settings"
+            title={hasFiles ? `Indexed: ${filename(selectedFolder) || 'folder'} — click to re-index` : 'Choose a folder to index'}
+            on:click={pickFolder}
+            aria-label="Choose folder to index"
           >
-            <svg viewBox="0 0 20 20" fill="none">
-              <circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.6"/>
-              <path d="M10 3v1.5M10 15.5V17M3 10h1.5M15.5 10H17M5.05 5.05l1.06 1.06M13.89 13.89l1.06 1.06M14.95 5.05l-1.06 1.06M6.11 13.89l-1.06 1.06"
-                    stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-            </svg>
+            {#if hasFiles}
+              <!-- folder-check icon -->
+              <svg viewBox="0 0 20 20" fill="none">
+                <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                <path d="M7 11l2 2 4-4" stroke="rgba(202,138,4,0.9)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            {:else}
+              <!-- folder-open icon -->
+              <svg viewBox="0 0 20 20" fill="none">
+                <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                <path d="M2 9h16" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+              </svg>
+            {/if}
           </button>
+        {:else if engineError}
+          <!-- Error indicator -->
+          <span class="engine-error-dot" title={engineError} aria-label="Engine error" />
+        {:else}
+          <!-- Init spinner -->
+          <span class="spinner-small" aria-label="Starting engine" role="status" />
         {/if}
       </div>
 
-      <p class="hint" class:error={phase === 'error'}>{hint}</p>
+      <p class="hint" class:error={phase === 'error' || !!engineError}>{hint}</p>
     </div>
+
+    <!-- No-files CTA (only shown when engine ready but nothing indexed yet) -->
+    {#if phase === 'idle' && engineReady && !hasFiles && !indexing}
+      <div class="folder-cta" transition:fade={{ duration: 150 }}>
+        <button class="folder-cta-btn" on:click={pickFolder}>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M12 11v6M9 14l3-3 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Choose a folder to index
+        </button>
+        <p class="cta-sub">Indexes .txt, .md, and .pdf files recursively</p>
+      </div>
+    {/if}
 
     <!-- Results area -->
     {#if phase === 'results'}
       <div class="results-area">
 
-        <!-- Answer -->
         {#if answer}
           <div class="answer-block">
             <span class="label">Answer</span>
@@ -190,9 +238,10 @@
             {#if sourcePDFs.length > 0}
               <div class="chips">
                 {#each sourcePDFs as pdf}
+                  {@const first = getFirstResult(pdf)}
                   <button
                     class="chip"
-                    on:click={() => openResult({ docPath: pdf, chunkIdx: 0, pageNum: getFirstPage(pdf), text: '', score: 0 })}
+                    on:click={() => first && openResult(first)}
                     title={pdf}
                   >
                     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" class="chip-icon">
@@ -207,7 +256,6 @@
           </div>
         {/if}
 
-        <!-- Result list -->
         {#if results.length > 0}
           <div class="result-list">
             {#each results as r (r.docPath + r.chunkIdx)}
@@ -229,6 +277,10 @@
                   <span class="file-path">{dirpath(r.docPath)}</span>
                 </div>
 
+                {#if isPDF}
+                  <span class="page-badge">p.{r.pageNum || 1}</span>
+                {/if}
+
                 <div class="rel-bar" style="--rel:{Math.min(r.score, 1)}" title="Relevance: {r.score.toFixed(2)}"></div>
               </button>
             {/each}
@@ -238,25 +290,13 @@
       </div>
     {/if}
 
-  </div><!-- /column -->
-
-  <!-- Overlays -->
-  <SettingsModal
-    visible={showSettings}
-    {indexing}
-    {indexedCount}
-    {totalFiles}
-    {currentFile}
-    {storeChunks}
-    on:close={() => (showSettings = false)}
-    on:engineReady={() => { engineReady = true; showSettings = false }}
-    on:indexStart={handleIndexStart}
-  />
+  </div>
 
   {#if showPDFViewer}
     <PDFViewer
       docPath={pdfViewerPath}
       initialPage={pdfViewerPage}
+      highlightText={pdfViewerHighlight}
       onClose={() => (showPDFViewer = false)}
     />
   {/if}
@@ -282,14 +322,12 @@
     background: #0c0c0f;
   }
 
-  /* Gold accent focus rings — accessible, on-brand */
   :global(:focus-visible) {
     outline: 2px solid rgba(202, 138, 4, 0.7);
     outline-offset: 2px;
     border-radius: 4px;
   }
 
-  /* Respect user motion preferences */
   @media (prefers-reduced-motion: reduce) {
     :global(*) {
       animation-duration: 0.01ms !important;
@@ -309,7 +347,6 @@
     padding: 0 1rem 4rem;
   }
 
-  /* ── Column ─────────────────────────────────────────────── */
   .column {
     width: 100%;
     max-width: 660px;
@@ -393,7 +430,7 @@
   }
 
   .search-input::placeholder { color: #48484a; }
-  .search-input:disabled { opacity: 0.5; }
+  .search-input:disabled { opacity: 0.45; }
 
   .icon-btn {
     width: 32px;
@@ -423,6 +460,24 @@
     animation: spin 0.8s linear infinite;
   }
 
+  .spinner-small {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid rgba(255,255,255,0.1);
+    border-top-color: rgba(255,255,255,0.4);
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: spin 1s linear infinite;
+  }
+
+  .engine-error-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ff453a;
+    flex-shrink: 0;
+  }
+
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .hint {
@@ -434,6 +489,42 @@
 
   .hint.error { color: #ff453a; }
 
+  /* ── Folder CTA ─────────────────────────────────────────── */
+  .folder-cta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 2rem;
+  }
+
+  .folder-cta-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.75rem 1.5rem;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.05);
+    color: #e5e5ea;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .folder-cta-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+  .folder-cta-btn:hover {
+    background: rgba(202,138,4,0.1);
+    border-color: rgba(202,138,4,0.35);
+  }
+
+  .cta-sub {
+    font-size: 0.78rem;
+    color: #48484a;
+  }
+
   /* ── Results ─────────────────────────────────────────────── */
   .results-area {
     margin-top: 1.5rem;
@@ -442,7 +533,6 @@
     gap: 1.25rem;
   }
 
-  /* Answer */
   .answer-block {
     display: flex;
     flex-direction: column;
@@ -464,7 +554,6 @@
     white-space: pre-wrap;
   }
 
-  /* Source chips */
   .chips {
     display: flex;
     flex-wrap: wrap;
@@ -492,13 +581,8 @@
     color: #f5f5f7;
   }
 
-  .chip-icon {
-    width: 13px;
-    height: 13px;
-    flex-shrink: 0;
-  }
+  .chip-icon { width: 13px; height: 13px; flex-shrink: 0; }
 
-  /* Result cards */
   .result-list {
     display: flex;
     flex-direction: column;
@@ -520,26 +604,16 @@
     transition: background 0.15s, border-color 0.15s;
   }
 
-  .result-card.clickable {
-    cursor: pointer;
-  }
+  .result-card.clickable { cursor: pointer; }
 
   .result-card.clickable:hover {
     background: rgba(255,255,255,0.07);
     border-color: rgba(255,255,255,0.1);
   }
 
-  .result-card[aria-disabled='true'] {
-    cursor: default;
-    opacity: 0.6;
-  }
+  .result-card[aria-disabled='true'] { cursor: default; opacity: 0.6; }
 
-  .file-icon {
-    width: 22px;
-    height: 22px;
-    color: #48484a;
-    flex-shrink: 0;
-  }
+  .file-icon { width: 22px; height: 22px; color: #48484a; flex-shrink: 0; }
 
   .file-info {
     flex: 1;
@@ -566,7 +640,14 @@
     white-space: nowrap;
   }
 
-  /* Relevance bar replaces raw score number */
+  .page-badge {
+    font-size: 0.72rem;
+    color: rgba(202,138,4,0.75);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
   .rel-bar {
     width: 36px;
     height: 3px;

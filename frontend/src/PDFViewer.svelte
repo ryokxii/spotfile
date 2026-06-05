@@ -8,9 +8,11 @@
 
   export let docPath: string
   export let initialPage: number = 1
+  export let highlightText: string = ''   // matched chunk text to highlight
   export let onClose: () => void = () => {}
 
   let canvas: HTMLCanvasElement
+  let hlCanvas: HTMLCanvasElement          // highlight overlay canvas
   let currentPage = initialPage || 1
   let totalPages = 0
   let loading = true
@@ -27,9 +29,7 @@
       const b64 = await ReadFileAsBase64(docPath)
       const binary = atob(b64)
       const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
       const loadingTask = pdfjsLib.getDocument({ data: bytes })
       pdfDoc = await loadingTask.promise
       totalPages = pdfDoc.numPages
@@ -47,13 +47,65 @@
     try {
       const page = await pdfDoc.getPage(num)
       const viewport = page.getViewport({ scale })
+
       canvas.width = viewport.width
       canvas.height = viewport.height
       const ctx = canvas.getContext('2d')!
       await page.render({ canvasContext: ctx, viewport }).promise
+
+      // Draw text highlights on overlay canvas
+      if (highlightText) {
+        await renderHighlights(page, viewport)
+      } else {
+        clearHighlights(viewport)
+      }
     } catch (e: any) {
       error = `Render error: ${e?.message || e}`
     }
+  }
+
+  // Draws amber highlight rectangles over text items that appear in highlightText.
+  async function renderHighlights(page: any, viewport: any) {
+    if (!hlCanvas) return
+
+    hlCanvas.width = viewport.width
+    hlCanvas.height = viewport.height
+    const ctx = hlCanvas.getContext('2d')!
+    ctx.clearRect(0, 0, viewport.width, viewport.height)
+
+    const textContent = await page.getTextContent()
+    const normalTarget = normalize(highlightText)
+
+    ctx.fillStyle = 'rgba(202, 138, 4, 0.28)'
+
+    for (const item of textContent.items as any[]) {
+      const str: string = item.str ?? ''
+      if (str.trim().length < 3) continue
+      if (!normalTarget.includes(normalize(str))) continue
+
+      // item.transform = [a, b, c, d, tx, ty] — (tx, ty) is PDF-space origin (baseline)
+      const tx: number = item.transform[4]
+      const ty: number = item.transform[5]
+      const [x, y] = viewport.convertToViewportPoint(tx, ty)
+
+      // Height of the glyph box in screen pixels
+      const h = Math.abs(item.height * viewport.scale)
+      // Width derived from item.width (PDF units) scaled to screen
+      const w = item.width * viewport.scale
+
+      // y is the baseline in screen coords (top-down); text box sits above it
+      ctx.fillRect(x, y - h, w, h)
+    }
+  }
+
+  function clearHighlights(viewport: any) {
+    if (!hlCanvas) return
+    hlCanvas.width = viewport.width
+    hlCanvas.height = viewport.height
+  }
+
+  function normalize(text: string): string {
+    return text.toLowerCase().replace(/\s+/g, ' ').trim()
   }
 
   async function goToPage(num: number) {
@@ -97,7 +149,10 @@
         <span class="zoom-label">{Math.round(scale * 100)}%</span>
         <button class="zoom-btn" on:click={() => { scale = Math.min(4, scale + 0.25); renderPage(currentPage) }}>+</button>
       </div>
-      <button class="close-btn" on:click={onClose}>&times;</button>
+      {#if highlightText}
+        <span class="highlight-badge">Highlighted match</span>
+      {/if}
+      <button class="close-btn" on:click={onClose} aria-label="Close PDF viewer">&times;</button>
     </header>
 
     <div class="canvas-wrap">
@@ -106,7 +161,11 @@
       {:else if error}
         <div class="viewer-error">{error}</div>
       {:else}
-        <canvas bind:this={canvas} class="pdf-canvas" />
+        <!-- PDF canvas + highlight overlay, stacked via CSS -->
+        <div class="canvas-stack">
+          <canvas bind:this={canvas} class="pdf-canvas" />
+          <canvas bind:this={hlCanvas} class="hl-canvas" aria-hidden="true" />
+        </div>
       {/if}
     </div>
   </div>
@@ -116,7 +175,7 @@
   .viewer-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.75);
+    background: rgba(0, 0, 0, 0.8);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -124,9 +183,9 @@
   }
 
   .viewer-container {
-    background: #1a2a3a;
-    border: 1px solid rgba(100, 181, 246, 0.3);
-    border-radius: 8px;
+    background: #141414;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
     width: 90vw;
@@ -139,16 +198,16 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.6rem 1rem;
-    background: rgba(15, 28, 46, 0.8);
-    border-bottom: 1px solid rgba(100, 181, 246, 0.15);
+    padding: 0.65rem 1rem;
+    background: #1c1c1e;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     flex-shrink: 0;
   }
 
   .doc-name {
     flex: 1;
     font-size: 0.85rem;
-    color: #90caf9;
+    color: #aeaeb2;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -159,47 +218,49 @@
     align-items: center;
     gap: 0.4rem;
     font-size: 0.85rem;
-    color: #b0bec5;
+    color: #636366;
   }
 
   .nav-btn, .zoom-btn {
-    background: rgba(100, 181, 246, 0.15);
-    border: 1px solid rgba(100, 181, 246, 0.25);
-    color: #90caf9;
-    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #aeaeb2;
+    border-radius: 5px;
     padding: 0.2rem 0.6rem;
     cursor: pointer;
     font-size: 1rem;
     line-height: 1;
+    transition: background 0.15s;
   }
 
-  .nav-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
+  .nav-btn:disabled { opacity: 0.25; cursor: default; }
+  .nav-btn:not(:disabled):hover, .zoom-btn:hover { background: rgba(255,255,255,0.13); }
 
-  .nav-btn:not(:disabled):hover, .zoom-btn:hover {
-    background: rgba(100, 181, 246, 0.3);
-  }
+  .page-info, .zoom-label { min-width: 80px; text-align: center; color: #636366; }
 
-  .page-info, .zoom-label {
-    min-width: 80px;
-    text-align: center;
+  .highlight-badge {
+    font-size: 0.72rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 20px;
+    background: rgba(202, 138, 4, 0.15);
+    color: rgba(202, 138, 4, 0.9);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .close-btn {
-    background: none;
+    background: rgba(255,255,255,0.08);
     border: none;
-    color: #90caf9;
-    font-size: 1.5rem;
+    color: #aeaeb2;
+    font-size: 1.3rem;
     cursor: pointer;
     line-height: 1;
-    padding: 0 0.25rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 5px;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
   }
-
-  .close-btn:hover {
-    color: #ef5350;
-  }
+  .close-btn:hover { background: rgba(255,69,58,0.2); color: #ff453a; }
 
   .canvas-wrap {
     flex: 1;
@@ -207,23 +268,39 @@
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    padding: 1rem;
-    background: #111;
+    padding: 1.25rem;
+    background: #0c0c0f;
+  }
+
+  /* Stack PDF canvas and highlight overlay on top of each other */
+  .canvas-stack {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
   }
 
   .pdf-canvas {
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+    display: block;
+    box-shadow: 0 4px 32px rgba(0, 0, 0, 0.6);
+    border-radius: 2px;
+  }
+
+  /* Overlay canvas sits exactly on top of the PDF canvas, pointer-events off */
+  .hl-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
     border-radius: 2px;
   }
 
   .loading, .viewer-error {
-    color: #90caf9;
+    color: #636366;
     font-size: 0.95rem;
     padding: 2rem;
     text-align: center;
+    align-self: center;
   }
 
-  .viewer-error {
-    color: #ef9a9a;
-  }
+  .viewer-error { color: #ff453a; }
 </style>

@@ -6,12 +6,12 @@ export function GenerateAnswer(arg1, arg2) {
   return window['go']['main']['App']['GenerateAnswer'](arg1, arg2);
 }
 
-export function Greet(arg1) {
-  return window['go']['main']['App']['Greet'](arg1);
-}
-
 export function IndexFiles(arg1) {
   return window['go']['main']['App']['IndexFiles'](arg1);
+}
+
+export function IndexFolder(arg1) {
+  return window['go']['main']['App']['IndexFolder'](arg1);
 }
 
 export function InitEngine(arg1) {
@@ -24,6 +24,10 @@ export function ReadFileAsBase64(arg1) {
 
 export function Search(arg1, arg2) {
   return window['go']['main']['App']['Search'](arg1, arg2);
+}
+
+export function SelectFolder() {
+  return window['go']['main']['App']['SelectFolder']();
 }
 
 export function StoreSize() {

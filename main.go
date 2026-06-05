@@ -2,6 +2,10 @@ package main
 
 import (
 	"embed"
+	"io"
+	"log"
+	"os"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -11,19 +15,31 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// filteredWriter silences the harmless "Unsolicited response received on idle
+// HTTP channel" noise that Go's net/http transport logs when Wails' internal
+// keep-alive connections receive a stale 400 from the webview bridge.
+type filteredWriter struct{ w io.Writer }
+
+func (fw filteredWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "Unsolicited response received on idle HTTP channel") {
+		return len(p), nil
+	}
+	return fw.w.Write(p)
+}
+
 func main() {
-	// Create an instance of the app structure
+	log.SetOutput(filteredWriter{os.Stderr})
+
 	app := NewApp()
 
-	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "spotfile",
+		Title:  "Spotfile",
 		Width:  1024,
 		Height: 768,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		BackgroundColour: &options.RGBA{R: 12, G: 12, B: 15, A: 255},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
