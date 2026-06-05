@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { InitEngine, IndexFiles, Search, StoreSize, GenerateAnswer } from '../wailsjs/go/main/App.js'
+  import { onMount } from 'svelte'
+  import { Search, GenerateAnswer, StoreSize } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import PDFViewer from './PDFViewer.svelte'
   import StatusBar from './StatusBar.svelte'
+  import SettingsModal from './SettingsModal.svelte'
 
   interface SearchResult {
     docPath: string
@@ -12,30 +14,89 @@
     score: number
   }
 
-  let libraryPath: string = ''
-  let modelPath: string = ''
-  let vocabPath: string = ''
-  let workers: number = 0
+  // UI phase
+  type Phase = 'idle' | 'loading' | 'results' | 'error'
+  let phase: Phase = 'idle'
 
-  let indexedCount: number = 0
-  let totalFiles: number = 0
-  let currentFile: string = ''
+  // Engine & settings
+  let engineReady = false
+  let showSettings = false
+  let storeChunks = 0
 
-  let query: string = ''
+  // Search
+  let query = ''
   let results: SearchResult[] = []
-  let searching: boolean = false
-  let generating: boolean = false
-  let answer: string = ''
-  let indexing: boolean = false
-  let watcherActive: boolean = false
-  let reindexing: boolean = false
-  let error: string = ''
-  let message: string = ''
+  let answer = ''
+  let searchError = ''
 
-  // PDF viewer state
-  let pdfViewerPath: string = ''
-  let pdfViewerPage: number = 1
-  let showPDFViewer: boolean = false
+  // Indexing (passed to StatusBar + SettingsModal)
+  let indexing = false
+  let indexedCount = 0
+  let totalFiles = 0
+  let currentFile = ''
+  let watcherActive = false
+  let reindexing = false
+
+  // PDF viewer
+  let pdfViewerPath = ''
+  let pdfViewerPage = 1
+  let showPDFViewer = false
+
+  const topK = 5
+
+  // Unique source PDFs from results
+  $: sourcePDFs = [...new Set(
+    results
+      .filter(r => r.docPath.toLowerCase().endsWith('.pdf'))
+      .map(r => r.docPath)
+  )]
+
+  // Status hint below search bar
+  $: hint = engineReady
+    ? phase === 'idle' ? 'Ready — type your question and press Enter'
+    : phase === 'loading' ? 'Searching…'
+    : phase === 'error' ? searchError
+    : ''
+    : 'Configure the engine to get started'
+
+  onMount(() => {
+    EventsOn('index:chunk', (data: any) => {
+      indexedCount = data.total
+      currentFile = data.path
+    })
+    EventsOn('index:done', async () => {
+      indexing = false
+      currentFile = ''
+      storeChunks = await StoreSize()
+    })
+    EventsOn('watcher:started', () => { watcherActive = true })
+    EventsOn('watcher:reindexing', (data: any) => { reindexing = true; currentFile = data.path })
+    EventsOn('watcher:done', () => { reindexing = false; currentFile = '' })
+  })
+
+  async function search() {
+    const q = query.trim()
+    if (!q || !engineReady || phase === 'loading') return
+
+    phase = 'loading'
+    results = []
+    answer = ''
+    searchError = ''
+
+    try {
+      // Run semantic search and answer generation concurrently
+      const [searchRes, answerRes] = await Promise.allSettled([
+        Search(q, topK),
+        GenerateAnswer(q, topK),
+      ])
+      results = searchRes.status === 'fulfilled' ? (searchRes.value ?? []) : []
+      answer = answerRes.status === 'fulfilled' ? (answerRes.value ?? '') : ''
+      phase = 'results'
+    } catch (e: any) {
+      searchError = e?.message || String(e)
+      phase = 'error'
+    }
+  }
 
   function openResult(result: SearchResult) {
     if (result.docPath.toLowerCase().endsWith('.pdf')) {
@@ -45,254 +106,160 @@
     }
   }
 
-  const topK: number = 5
-
-  async function initEngine() {
-    try {
-      error = ''
-      message = ''
-      await InitEngine({
-        libraryPath,
-        modelPath,
-        vocabPath,
-        workers,
-      })
-      message = 'Engine initialized successfully'
-    } catch (e: any) {
-      error = `Init failed: ${e.message || e}`
-    }
+  function filename(path: string) {
+    return path.split(/[/\\]/).pop() ?? path
   }
 
-  async function handleFileSelect(event: Event) {
-    const target = event.target as HTMLInputElement
-    const files = target.files
-    if (!files || files.length === 0) return
-
-    try {
-      error = ''
-      message = ''
-      indexing = true
-      indexedCount = 0
-      totalFiles = files.length
-
-      const paths = Array.from(files).map((f) => (f as any).path || f.name)
-
-      // Listen for indexing events
-      EventsOn('index:chunk', (data: any) => {
-        indexedCount = data.total
-        currentFile = data.path
-      })
-
-      EventsOn('index:done', (total: number) => {
-        indexing = false
-        currentFile = ''
-        message = `Indexed ${total} chunks`
-        const store = StoreSize()
-        message += ` · Store: ${store} total`
-      })
-
-      // Listen for watcher events
-      EventsOn('watcher:started', () => {
-        watcherActive = true
-        message += ' (File watcher active)'
-      })
-
-      EventsOn('watcher:reindexing', (data: any) => {
-        reindexing = true
-        currentFile = data.path
-        message = `Re-indexing: ${data.path}`
-      })
-
-      EventsOn('watcher:done', () => {
-        reindexing = false
-        currentFile = ''
-        message = 'Re-indexing complete'
-      })
-
-      await IndexFiles(paths)
-    } catch (e: any) {
-      error = `Index failed: ${e.message || e}`
-      indexing = false
-    }
+  function dirpath(path: string) {
+    const parts = path.split(/[/\\]/)
+    parts.pop()
+    return parts.join('/') || path
   }
 
-  async function performSearch() {
-    if (!query.trim()) {
-      error = 'Please enter a search query'
-      return
-    }
-
-    try {
-      error = ''
-      message = ''
-      answer = '' // Clear previous answer
-      searching = true
-      const res = await Search(query, topK)
-      results = res || []
-
-      if (results.length === 0) {
-        message = 'No results found'
-      } else {
-        message = `Found ${results.length} result(s)`
-      }
-    } catch (e: any) {
-      error = `Search failed: ${e.message || e}`
-    } finally {
-      searching = false
-    }
-  }
-
-  async function generateAnswerFromSearch() {
-    if (!query.trim()) {
-      error = 'Please perform a search first'
-      return
-    }
-
-    try {
-      error = ''
-      generating = true
-      const res = await GenerateAnswer(query, topK)
-      answer = res
-      message = 'Answer generated successfully'
-    } catch (e: any) {
-      error = `Generation failed: ${e.message || e}`
-      answer = ''
-    } finally {
-      generating = false
-    }
-  }
-
-  function truncateText(text: string, maxLen: number = 100): string {
-    return text.length > maxLen ? text.substring(0, maxLen) + '...' : text
+  function handleIndexStart(e: CustomEvent<{ paths: string[]; total: number }>) {
+    indexing = true
+    indexedCount = 0
+    totalFiles = e.detail.total
   }
 </script>
 
-<main>
-  <div class="container">
-    <h1>Spotfile — Local Search</h1>
+<!-- ── Root ───────────────────────────────────────────────────── -->
+<div class="root">
+  <div class="column">
 
-    <!-- Engine Configuration -->
-    <section class="panel">
-      <h2>Engine Configuration</h2>
-      <div class="form-group">
-        <label for="libraryPath">ONNX Runtime Library Path</label>
-        <input
-          id="libraryPath"
-          type="text"
-          bind:value={libraryPath}
-          placeholder="e.g., /opt/homebrew/lib/libonnxruntime.dylib"
-        />
+    <!-- Logo (only shown when idle) -->
+    {#if phase === 'idle'}
+      <div class="logo-area">
+        <!-- Nested-square spiral icon -->
+        <svg class="logo-icon" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="5"  y="5"  width="70" height="70" rx="18" stroke="white" stroke-width="5.5"/>
+          <rect x="17" y="17" width="46" height="46" rx="12" stroke="white" stroke-width="4.5"/>
+          <rect x="28" y="28" width="24" height="24" rx="7"  stroke="white" stroke-width="3.5"/>
+        </svg>
+        <h1 class="logo-title">Spotfile</h1>
+        <p class="logo-sub">your personal AI file searcher</p>
       </div>
-      <div class="form-group">
-        <label for="modelPath">Model Path</label>
-        <input
-          id="modelPath"
-          type="text"
-          bind:value={modelPath}
-          placeholder="e.g., ~/.spotfile/model.onnx"
-        />
-      </div>
-      <div class="form-group">
-        <label for="vocabPath">Vocab Path</label>
-        <input
-          id="vocabPath"
-          type="text"
-          bind:value={vocabPath}
-          placeholder="e.g., ~/.spotfile/vocab.txt"
-        />
-      </div>
-      <div class="form-group">
-        <label for="workers">Workers (0 = auto)</label>
-        <input
-          id="workers"
-          type="number"
-          bind:value={workers}
-          min="0"
-          placeholder="0"
-        />
-      </div>
-      <button on:click={initEngine} class="btn btn-primary">Initialize Engine</button>
-    </section>
+    {/if}
 
-    <!-- File Indexing -->
-    <section class="panel">
-      <h2>Index Files</h2>
-      <input
-        type="file"
-        multiple
-        on:change={handleFileSelect}
-        disabled={indexing}
-        accept=".txt,.md,.pdf"
-      />
-      {#if watcherActive && !reindexing}
-        <p class="watcher-badge">Watcher active</p>
-      {/if}
-    </section>
+    <!-- Search bar -->
+    <div class="search-wrap" class:results-mode={phase === 'results'}>
+      <div class="search-bar" class:loading={phase === 'loading'}>
+        <!-- Search icon -->
+        <svg class="icon-search" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
 
-    <!-- Search -->
-    <section class="panel">
-      <h2>Search</h2>
-      <div class="search-box">
         <input
           type="text"
+          class="search-input"
           bind:value={query}
-          placeholder="Enter search query..."
-          on:keydown={(e) => e.key === 'Enter' && performSearch()}
-          disabled={searching}
+          placeholder="Search your files…"
+          disabled={phase === 'loading'}
+          on:keydown={(e) => e.key === 'Enter' && search()}
+          autocomplete="off"
+          spellcheck="false"
         />
-        <button on:click={performSearch} disabled={searching} class="btn btn-primary">
-          {searching ? 'Searching...' : 'Search'}
-        </button>
-        {#if results.length > 0}
-          <button on:click={generateAnswerFromSearch} disabled={generating} class="btn btn-secondary">
-            {generating ? '⏳ Generating...' : '✨ Answer'}
+
+        <!-- Settings / spinner -->
+        {#if phase === 'loading'}
+          <span class="spinner" aria-label="Searching" />
+        {:else}
+          <button
+            class="icon-btn"
+            title="Settings"
+            on:click={() => (showSettings = true)}
+            aria-label="Open settings"
+          >
+            <svg viewBox="0 0 20 20" fill="none">
+              <circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M10 3v1.5M10 15.5V17M3 10h1.5M15.5 10H17M5.05 5.05l1.06 1.06M13.89 13.89l1.06 1.06M14.95 5.05l-1.06 1.06M6.11 13.89l-1.06 1.06"
+                    stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
           </button>
         {/if}
       </div>
-    </section>
 
-    <!-- Generated Answer -->
-    {#if answer}
-      <section class="panel panel-answer">
-        <h2>Generated Answer</h2>
-        <div class="answer-body">{answer}</div>
-      </section>
-    {/if}
+      <!-- Status hint -->
+      <p class="hint" class:error={phase === 'error'}>{hint}</p>
+    </div>
 
-    <!-- Results -->
-    {#if results.length > 0}
-      <section class="panel">
-        <h2>Results</h2>
-        <table class="results-table">
-          <thead>
-            <tr>
-              <th>Score</th>
-              <th>Document</th>
-              <th>Page</th>
-              <th>Text Preview</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each results as result (result.docPath + result.chunkIdx)}
-              {@const isPDF = result.docPath.toLowerCase().endsWith('.pdf')}
-              <tr
+    <!-- Results area -->
+    {#if phase === 'results'}
+      <div class="results-area">
+
+        <!-- Answer -->
+        {#if answer}
+          <div class="answer-block">
+            <span class="label">Answer</span>
+            <p class="answer-text">{answer}</p>
+
+            <!-- Source chips -->
+            {#if sourcePDFs.length > 0}
+              <div class="chips">
+                {#each sourcePDFs as pdf}
+                  <button
+                    class="chip"
+                    on:click={() => openResult({ docPath: pdf, chunkIdx: 0, pageNum: 1, text: '', score: 0 })}
+                    title={pdf}
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" class="chip-icon">
+                      <rect x="2" y="1" width="10" height="13" rx="2" stroke="currentColor" stroke-width="1.4"/>
+                      <path d="M5 5h5M5 8h5M5 11h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    </svg>
+                    {filename(pdf)}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Result list -->
+        {#if results.length > 0}
+          <div class="result-list">
+            {#each results as r (r.docPath + r.chunkIdx)}
+              {@const isPDF = r.docPath.toLowerCase().endsWith('.pdf')}
+              <button
+                class="result-card"
                 class:clickable={isPDF}
-                on:click={() => openResult(result)}
-                on:keydown={(e) => e.key === 'Enter' && openResult(result)}
-                role={isPDF ? 'button' : undefined}
-                tabindex={isPDF ? 0 : undefined}
-                title={isPDF ? 'Click to open PDF at this page' : undefined}
+                on:click={() => openResult(r)}
+                disabled={!isPDF}
               >
-                <td class="score">{(result.score * 100).toFixed(1)}%</td>
-                <td class="mono">{result.docPath.split('/').pop()}</td>
-                <td>{result.pageNum > 0 ? result.pageNum : '—'}</td>
-                <td>{truncateText(result.text)}</td>
-              </tr>
+                <!-- File icon -->
+                <svg class="file-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                  <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+
+                <div class="file-info">
+                  <span class="file-name">{filename(r.docPath)}</span>
+                  <span class="file-path">{dirpath(r.docPath)}</span>
+                </div>
+
+                <span class="score">{r.score.toFixed(2)}</span>
+              </button>
             {/each}
-          </tbody>
-        </table>
-      </section>
+          </div>
+        {/if}
+
+      </div>
     {/if}
+
+  </div><!-- /column -->
+
+  <!-- Overlays -->
+  <SettingsModal
+    visible={showSettings}
+    {indexing}
+    {indexedCount}
+    {totalFiles}
+    {currentFile}
+    {storeChunks}
+    on:close={() => (showSettings = false)}
+    on:engineReady={() => { engineReady = true; showSettings = false }}
+    on:indexStart={handleIndexStart}
+  />
 
   {#if showPDFViewer}
     <PDFViewer
@@ -310,255 +277,293 @@
     {totalFiles}
     {currentFile}
   />
-
-    <!-- Status Messages -->
-    {#if error}
-      <div class="alert alert-error">{error}</div>
-    {/if}
-    {#if message}
-      <div class="alert alert-info">{message}</div>
-    {/if}
-  </div>
-</main>
+</div>
 
 <style>
-  * {
+  :global(*, *::before, *::after) {
     box-sizing: border-box;
+    margin: 0;
+    padding: 0;
   }
 
-  main {
+  :global(body) {
+    background: #0c0c0f;
+  }
+
+  .root {
     width: 100%;
-    height: 100vh;
-    background: linear-gradient(135deg, #1e3a5f 0%, #0f1c2e 100%);
-    color: #e0e0e0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    overflow-y: auto;
-    padding: 2rem 0 3rem; /* 3rem bottom clears the status bar */
-  }
-
-  .container {
-    max-width: 1000px;
-    margin: 0 auto;
-    padding: 0 2rem;
-  }
-
-  h1 {
-    text-align: center;
-    margin-bottom: 3rem;
-    font-size: 2.5rem;
-    background: linear-gradient(135deg, #64b5f6 0%, #42a5f5 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  h2 {
-    font-size: 1.5rem;
-    margin-bottom: 1rem;
-    color: #64b5f6;
-    border-bottom: 2px solid #42a5f5;
-    padding-bottom: 0.5rem;
-  }
-
-  .panel {
-    background: rgba(30, 58, 95, 0.4);
-    border: 1px solid rgba(100, 181, 246, 0.2);
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 2rem;
-    backdrop-filter: blur(10px);
-  }
-
-  .form-group {
-    margin-bottom: 1rem;
-  }
-
-  label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: #b0bec5;
-  }
-
-  input[type='text'],
-  input[type='number'],
-  input[type='file'] {
-    width: 100%;
-    padding: 0.75rem;
-    background: rgba(15, 28, 46, 0.6);
-    border: 1px solid rgba(100, 181, 246, 0.3);
-    border-radius: 4px;
-    color: #e0e0e0;
-    font-size: 0.95rem;
-    transition: all 0.2s;
-  }
-
-  input[type='text']:focus,
-  input[type='number']:focus,
-  input[type='file']:focus {
-    outline: none;
-    border-color: #42a5f5;
-    background: rgba(15, 28, 46, 0.8);
-    box-shadow: 0 0 8px rgba(66, 165, 245, 0.3);
-  }
-
-  input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn {
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.95rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #42a5f5 0%, #1e88e5 100%);
-    color: white;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(66, 165, 245, 0.4);
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .search-box {
+    min-height: 100vh;
+    background: #0c0c0f;
+    color: #f5f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
     display: flex;
-    gap: 0.5rem;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 1rem 4rem;
   }
 
-  .search-box input {
-    flex: 1;
+  /* ── Column ─────────────────────────────────────────────── */
+  .column {
+    width: 100%;
+    max-width: 660px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding-top: 18vh;
+    transition: padding-top 0.3s ease;
   }
 
-  .search-box button {
+  /* When in results mode, collapse top padding so search stays near top */
+  .column:has(.results-mode) {
+    padding-top: 6vh;
+  }
+
+  /* ── Logo ────────────────────────────────────────────────── */
+  .logo-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 2.5rem;
+  }
+
+  .logo-icon {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 1rem;
+  }
+
+  .logo-title {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #f5f5f7;
+    margin-bottom: 0.35rem;
+  }
+
+  .logo-sub {
+    font-size: 0.9rem;
+    color: #636366;
+  }
+
+  /* ── Search bar ─────────────────────────────────────────── */
+  .search-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 0 1rem;
+    height: 54px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+
+  .search-bar:focus-within {
+    border-color: rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.09);
+  }
+
+  .icon-search {
+    width: 18px;
+    height: 18px;
+    color: #636366;
     flex-shrink: 0;
   }
 
-  .watcher-badge {
-    display: inline-block;
-    margin-top: 0.75rem;
-    padding: 0.25rem 0.65rem;
-    background: rgba(76, 175, 80, 0.12);
-    border: 1px solid rgba(76, 175, 80, 0.3);
-    border-radius: 12px;
-    font-size: 0.78rem;
-    color: #81c784;
+  .search-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: #f5f5f7;
+    font-size: 1rem;
+    caret-color: white;
   }
 
-  .results-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
+  .search-input::placeholder { color: #48484a; }
+
+  .search-input:disabled { opacity: 0.5; }
+
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #636366;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
   }
 
-  .results-table th {
-    background: rgba(15, 28, 46, 0.4);
-    padding: 0.75rem;
-    text-align: left;
+  .icon-btn svg { width: 18px; height: 18px; }
+  .icon-btn:hover { color: #aeaeb2; background: rgba(255,255,255,0.08); }
+
+  /* Loading spinner */
+  .spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255,255,255,0.15);
+    border-top-color: rgba(255,255,255,0.7);
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .hint {
+    font-size: 0.82rem;
+    color: #48484a;
+    padding-left: 0.25rem;
+    min-height: 1.2em;
+  }
+
+  .hint.error { color: #ff453a; }
+
+  /* ── Results ─────────────────────────────────────────────── */
+  .results-area {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  /* Answer */
+  .answer-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .label {
+    font-size: 0.68rem;
     font-weight: 600;
-    color: #64b5f6;
-    border-bottom: 1px solid rgba(100, 181, 246, 0.2);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #636366;
   }
 
-  .results-table td {
-    padding: 0.75rem;
-    border-bottom: 1px solid rgba(100, 181, 246, 0.1);
+  .answer-text {
+    font-size: 0.97rem;
+    line-height: 1.75;
+    color: #e5e5ea;
+    white-space: pre-wrap;
   }
 
-  .results-table tr:hover {
-    background: rgba(100, 181, 246, 0.05);
+  /* Source chips */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
-  tr.clickable {
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.05);
+    color: #aeaeb2;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+  }
+
+  .chip:hover {
+    background: rgba(255,255,255,0.1);
+    color: #f5f5f7;
+  }
+
+  .chip-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+  }
+
+  /* Result cards */
+  .result-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .result-card {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.8rem 0.9rem;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid transparent;
+    cursor: default;
+    text-align: left;
+    width: 100%;
+    color: inherit;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .result-card.clickable {
     cursor: pointer;
   }
 
-  tr.clickable:hover td {
-    background: rgba(100, 181, 246, 0.12);
+  .result-card.clickable:hover {
+    background: rgba(255,255,255,0.07);
+    border-color: rgba(255,255,255,0.1);
+  }
+
+  .result-card:disabled {
+    cursor: default;
+  }
+
+  .file-icon {
+    width: 22px;
+    height: 22px;
+    color: #48484a;
+    flex-shrink: 0;
+  }
+
+  .file-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .file-name {
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: #e5e5ea;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-path {
+    font-size: 0.75rem;
+    color: #48484a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .score {
-    font-weight: 600;
-    color: #81c784;
-    min-width: 60px;
-  }
-
-  .mono {
-    font-family: 'Monaco', 'Courier New', monospace;
-    color: #90caf9;
-    word-break: break-word;
-    max-width: 250px;
-  }
-
-  .panel-answer {
-    border-color: rgba(129, 199, 132, 0.35);
-    background: rgba(27, 60, 30, 0.35);
-  }
-
-  .answer-body {
-    line-height: 1.7;
-    white-space: pre-wrap;
-    color: #c8e6c9;
-    font-size: 0.95rem;
-  }
-
-  .btn-secondary {
-    background: linear-gradient(135deg, #66bb6a 0%, #43a047 100%);
-    color: white;
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 187, 106, 0.4);
-  }
-
-  .alert {
-    padding: 1rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-    border-left: 4px solid;
-  }
-
-  .alert-error {
-    background: rgba(229, 57, 53, 0.1);
-    border-left-color: #ef5350;
-    color: #ef9a9a;
-  }
-
-  .alert-info {
-    background: rgba(66, 165, 245, 0.1);
-    border-left-color: #42a5f5;
-    color: #90caf9;
-  }
-
-  @media (max-width: 768px) {
-    .container {
-      padding: 0 1rem;
-    }
-
-    h1 {
-      font-size: 1.75rem;
-      margin-bottom: 2rem;
-    }
-
-    .results-table {
-      font-size: 0.8rem;
-    }
-
-    .results-table th,
-    .results-table td {
-      padding: 0.5rem;
-    }
+    font-size: 0.78rem;
+    color: #48484a;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
   }
 </style>
