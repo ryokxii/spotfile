@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -181,6 +182,16 @@ func (a *App) GenerateAnswer(query string, topK int) (string, error) {
 // StoreSize returns the number of indexed chunks (useful for UI status).
 func (a *App) StoreSize() int {
 	return a.store.Len()
+}
+
+// ReadFileAsBase64 reads a file from disk and returns its content as a
+// base64-encoded string. Used by the frontend PDF viewer to load local PDFs.
+func (a *App) ReadFileAsBase64(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read file: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
 }
 
 // Greet returns a greeting message.

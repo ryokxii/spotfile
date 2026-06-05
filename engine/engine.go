@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -136,50 +137,68 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 	go func() {
 		defer close(out)
 
-		// Stage 1: read files in parallel → docs channel
-		type doc struct {
-			path string
-			text string
+		// Stage 1: read files in parallel → pages channel.
+		// PDFs are extracted page-by-page; other files are treated as one page (pageNum=0).
+		type page struct {
+			path    string
+			pageNum int
+			text    string
 		}
 		docBufSize := len(paths)
 		if docBufSize > maxDocBuffer {
 			docBufSize = maxDocBuffer
 		}
-		docs := make(chan doc, docBufSize)
+		pages := make(chan page, docBufSize)
 		var readWg sync.WaitGroup
 		for _, p := range paths {
 			readWg.Add(1)
 			go func(path string) {
 				defer readWg.Done()
+				if strings.HasSuffix(strings.ToLower(path), ".pdf") {
+					pdfPages, err := ReadPDFPages(path)
+					if err != nil {
+						log.Printf("index: skip pdf %s: %v", path, err)
+						return
+					}
+					for _, pp := range pdfPages {
+						select {
+						case pages <- page{path: path, pageNum: pp.PageNum, text: pp.Text}:
+						case <-ctx.Done():
+							return
+						}
+					}
+					return
+				}
 				data, err := os.ReadFile(path)
 				if err != nil {
 					log.Printf("index: skip %s: %v", path, err)
 					return
 				}
 				select {
-				case docs <- doc{path: path, text: string(data)}:
+				case pages <- page{path: path, pageNum: 0, text: string(data)}:
 				case <-ctx.Done():
 				}
 			}(p)
 		}
 		go func() {
 			readWg.Wait()
-			close(docs)
+			close(pages)
 		}()
 
-		// Stage 2: chunk documents → chunks channel (single goroutine preserves ordering)
+		// Stage 2: chunk pages → chunks channel (single goroutine preserves ordering)
 		type chunk struct {
 			docPath  string
 			chunkIdx int
+			pageNum  int
 			text     string
 		}
 		chunks := make(chan chunk, defaultBatchSize*4)
 		go func() {
 			defer close(chunks)
-			for d := range docs {
-				for i, c := range Chunk(d.text, maxChunkWords, chunkOverlap) {
+			for pg := range pages {
+				for i, c := range Chunk(pg.text, maxChunkWords, chunkOverlap) {
 					select {
-					case chunks <- chunk{docPath: d.path, chunkIdx: i, text: c}:
+					case chunks <- chunk{docPath: pg.path, chunkIdx: i, pageNum: pg.pageNum, text: c}:
 					case <-ctx.Done():
 						return
 					}
@@ -194,12 +213,10 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			go func() {
 				defer embedWg.Done()
 				batch := make([]chunk, 0, defaultBatchSize)
-				for c := range chunks {
-					batch = append(batch, c)
-					if len(batch) < defaultBatchSize {
-						continue
+				flush := func() {
+					if len(batch) == 0 {
+						return
 					}
-					// Process batch
 					texts := make([]string, len(batch))
 					for i, ch := range batch {
 						texts[i] = ch.text
@@ -208,36 +225,30 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 					if err != nil {
 						log.Printf("index: batch embed failed: %v", err)
 						batch = batch[:0]
-						continue
+						return
 					}
 					for i, ch := range batch {
 						select {
-						case out <- EmbeddedChunk{DocPath: ch.docPath, ChunkIdx: ch.chunkIdx, Text: ch.text, Embedding: vecs[i]}:
+						case out <- EmbeddedChunk{
+							DocPath:   ch.docPath,
+							ChunkIdx:  ch.chunkIdx,
+							PageNum:   ch.pageNum,
+							Text:      ch.text,
+							Embedding: vecs[i],
+						}:
 						case <-ctx.Done():
 							return
 						}
 					}
 					batch = batch[:0]
 				}
-				// Process remaining chunks in batch
-				if len(batch) > 0 {
-					texts := make([]string, len(batch))
-					for i, ch := range batch {
-						texts[i] = ch.text
-					}
-					vecs, err := e.BatchEmbed(texts)
-					if err != nil {
-						log.Printf("index: batch embed failed: %v", err)
-						return
-					}
-					for i, ch := range batch {
-						select {
-						case out <- EmbeddedChunk{DocPath: ch.docPath, ChunkIdx: ch.chunkIdx, Text: ch.text, Embedding: vecs[i]}:
-						case <-ctx.Done():
-							return
-						}
+				for c := range chunks {
+					batch = append(batch, c)
+					if len(batch) >= defaultBatchSize {
+						flush()
 					}
 				}
+				flush() // remaining
 			}()
 		}
 		embedWg.Wait()

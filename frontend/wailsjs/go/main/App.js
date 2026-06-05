@@ -25,3 +25,7 @@ export function StoreSize() {
 export function GenerateAnswer(arg1, arg2) {
   return window['go']['main']['App']['GenerateAnswer'](arg1, arg2);
 }
+
+export function ReadFileAsBase64(arg1) {
+  return window['go']['main']['App']['ReadFileAsBase64'](arg1);
+}

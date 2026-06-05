@@ -14,3 +14,5 @@ export function Search(arg1:string,arg2:number):Promise<Array<engine.SearchResul
 export function StoreSize():Promise<number>;
 
 export function GenerateAnswer(arg1:string,arg2:number):Promise<string>;
+
+export function ReadFileAsBase64(arg1:string):Promise<string>;
