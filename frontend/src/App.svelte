@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { fade } from 'svelte/transition'
   import { Search, GenerateAnswer, StoreSize } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import PDFViewer from './PDFViewer.svelte'
@@ -14,22 +15,18 @@
     score: number
   }
 
-  // UI phase
   type Phase = 'idle' | 'loading' | 'results' | 'error'
   let phase: Phase = 'idle'
 
-  // Engine & settings
   let engineReady = false
   let showSettings = false
   let storeChunks = 0
 
-  // Search
   let query = ''
   let results: SearchResult[] = []
   let answer = ''
   let searchError = ''
 
-  // Indexing (passed to StatusBar + SettingsModal)
   let indexing = false
   let indexedCount = 0
   let totalFiles = 0
@@ -37,21 +34,18 @@
   let watcherActive = false
   let reindexing = false
 
-  // PDF viewer
   let pdfViewerPath = ''
   let pdfViewerPage = 1
   let showPDFViewer = false
 
   const topK = 5
 
-  // Unique source PDFs from results
   $: sourcePDFs = [...new Set(
     results
       .filter(r => r.docPath.toLowerCase().endsWith('.pdf'))
       .map(r => r.docPath)
   )]
 
-  // Status hint below search bar
   $: hint = engineReady
     ? phase === 'idle' ? 'Ready — type your question and press Enter'
     : phase === 'loading' ? 'Searching…'
@@ -84,7 +78,6 @@
     searchError = ''
 
     try {
-      // Run semantic search and answer generation concurrently
       const [searchRes, answerRes] = await Promise.allSettled([
         Search(q, topK),
         GenerateAnswer(q, topK),
@@ -106,6 +99,10 @@
     }
   }
 
+  function getFirstPage(pdf: string): number {
+    return results.find(r => r.docPath === pdf)?.pageNum || 1
+  }
+
   function filename(path: string) {
     return path.split(/[/\\]/).pop() ?? path
   }
@@ -125,12 +122,11 @@
 
 <!-- ── Root ───────────────────────────────────────────────────── -->
 <div class="root">
-  <div class="column">
+  <div class="column" class:in-results={phase === 'results'}>
 
     <!-- Logo (only shown when idle) -->
     {#if phase === 'idle'}
-      <div class="logo-area">
-        <!-- Nested-square spiral icon -->
+      <div class="logo-area" transition:fade={{ duration: 180 }}>
         <svg class="logo-icon" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <rect x="5"  y="5"  width="70" height="70" rx="18" stroke="white" stroke-width="5.5"/>
           <rect x="17" y="17" width="46" height="46" rx="12" stroke="white" stroke-width="4.5"/>
@@ -142,9 +138,8 @@
     {/if}
 
     <!-- Search bar -->
-    <div class="search-wrap" class:results-mode={phase === 'results'}>
+    <div class="search-wrap">
       <div class="search-bar" class:loading={phase === 'loading'}>
-        <!-- Search icon -->
         <svg class="icon-search" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
           <path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -161,9 +156,8 @@
           spellcheck="false"
         />
 
-        <!-- Settings / spinner -->
         {#if phase === 'loading'}
-          <span class="spinner" aria-label="Searching" />
+          <span class="spinner" aria-label="Searching" role="status" />
         {:else}
           <button
             class="icon-btn"
@@ -180,7 +174,6 @@
         {/if}
       </div>
 
-      <!-- Status hint -->
       <p class="hint" class:error={phase === 'error'}>{hint}</p>
     </div>
 
@@ -194,13 +187,12 @@
             <span class="label">Answer</span>
             <p class="answer-text">{answer}</p>
 
-            <!-- Source chips -->
             {#if sourcePDFs.length > 0}
               <div class="chips">
                 {#each sourcePDFs as pdf}
                   <button
                     class="chip"
-                    on:click={() => openResult({ docPath: pdf, chunkIdx: 0, pageNum: 1, text: '', score: 0 })}
+                    on:click={() => openResult({ docPath: pdf, chunkIdx: 0, pageNum: getFirstPage(pdf), text: '', score: 0 })}
                     title={pdf}
                   >
                     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" class="chip-icon">
@@ -223,10 +215,10 @@
               <button
                 class="result-card"
                 class:clickable={isPDF}
-                on:click={() => openResult(r)}
-                disabled={!isPDF}
+                on:click={() => isPDF && openResult(r)}
+                tabindex={isPDF ? 0 : -1}
+                aria-disabled={!isPDF}
               >
-                <!-- File icon -->
                 <svg class="file-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
                   <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -237,7 +229,7 @@
                   <span class="file-path">{dirpath(r.docPath)}</span>
                 </div>
 
-                <span class="score">{r.score.toFixed(2)}</span>
+                <div class="rel-bar" style="--rel:{Math.min(r.score, 1)}" title="Relevance: {r.score.toFixed(2)}"></div>
               </button>
             {/each}
           </div>
@@ -290,6 +282,21 @@
     background: #0c0c0f;
   }
 
+  /* Gold accent focus rings — accessible, on-brand */
+  :global(:focus-visible) {
+    outline: 2px solid rgba(202, 138, 4, 0.7);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Respect user motion preferences */
+  @media (prefers-reduced-motion: reduce) {
+    :global(*) {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
   .root {
     width: 100%;
     min-height: 100vh;
@@ -313,8 +320,7 @@
     transition: padding-top 0.3s ease;
   }
 
-  /* When in results mode, collapse top padding so search stays near top */
-  .column:has(.results-mode) {
+  .column.in-results {
     padding-top: 6vh;
   }
 
@@ -365,7 +371,7 @@
   }
 
   .search-bar:focus-within {
-    border-color: rgba(255, 255, 255, 0.28);
+    border-color: rgba(202, 138, 4, 0.55);
     background: rgba(255, 255, 255, 0.09);
   }
 
@@ -383,11 +389,10 @@
     outline: none;
     color: #f5f5f7;
     font-size: 1rem;
-    caret-color: white;
+    caret-color: rgba(202, 138, 4, 0.9);
   }
 
   .search-input::placeholder { color: #48484a; }
-
   .search-input:disabled { opacity: 0.5; }
 
   .icon-btn {
@@ -408,12 +413,11 @@
   .icon-btn svg { width: 18px; height: 18px; }
   .icon-btn:hover { color: #aeaeb2; background: rgba(255,255,255,0.08); }
 
-  /* Loading spinner */
   .spinner {
     width: 18px;
     height: 18px;
-    border: 2px solid rgba(255,255,255,0.15);
-    border-top-color: rgba(255,255,255,0.7);
+    border: 2px solid rgba(255,255,255,0.12);
+    border-top-color: rgba(202, 138, 4, 0.85);
     border-radius: 50%;
     flex-shrink: 0;
     animation: spin 0.8s linear infinite;
@@ -478,12 +482,13 @@
     color: #aeaeb2;
     font-size: 0.8rem;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
     white-space: nowrap;
   }
 
   .chip:hover {
-    background: rgba(255,255,255,0.1);
+    background: rgba(202,138,4,0.12);
+    border-color: rgba(202,138,4,0.35);
     color: #f5f5f7;
   }
 
@@ -524,8 +529,9 @@
     border-color: rgba(255,255,255,0.1);
   }
 
-  .result-card:disabled {
+  .result-card[aria-disabled='true'] {
     cursor: default;
+    opacity: 0.6;
   }
 
   .file-icon {
@@ -560,10 +566,24 @@
     white-space: nowrap;
   }
 
-  .score {
-    font-size: 0.78rem;
-    color: #48484a;
-    font-variant-numeric: tabular-nums;
+  /* Relevance bar replaces raw score number */
+  .rel-bar {
+    width: 36px;
+    height: 3px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    overflow: hidden;
     flex-shrink: 0;
+    position: relative;
+  }
+
+  .rel-bar::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: calc(var(--rel) * 100%);
+    background: rgba(202, 138, 4, 0.7);
+    border-radius: 2px;
+    transition: width 0.4s ease;
   }
 </style>

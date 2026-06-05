@@ -51,15 +51,15 @@
     left: 0;
     right: 0;
     height: 28px;
-    background: rgba(10, 20, 35, 0.92);
-    border-top: 1px solid rgba(100, 181, 246, 0.15);
+    background: rgba(12, 12, 15, 0.92);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
     backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     gap: 0.75rem;
     padding: 0 1rem;
     font-size: 0.78rem;
-    color: #78909c;
+    color: #48484a;
     z-index: 500;
   }
 
@@ -73,17 +73,17 @@
 
   .label {
     font-weight: 600;
-    color: #90caf9;
+    color: #aeaeb2;
     white-space: nowrap;
   }
 
   .label.quiet {
-    color: #546e7a;
+    color: #48484a;
     font-weight: 400;
   }
 
   .filename {
-    color: #b0bec5;
+    color: #636366;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -92,45 +92,47 @@
 
   .count, .files {
     white-space: nowrap;
-    color: #607d8b;
+    color: #48484a;
   }
 
   .sep {
-    color: #37474f;
+    color: #3a3a3c;
   }
 
-  /* animated pulse dot */
+  /* Indexing pulse — amber to match accent */
   .pulse {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #42a5f5;
+    background: rgba(202, 138, 4, 0.85);
     flex-shrink: 0;
     animation: pulse 1.4s ease-in-out infinite;
   }
 
+  /* Re-indexing pulse — slightly cooler white */
   .pulse.reindex {
-    background: #ffa726;
+    background: #aeaeb2;
   }
 
+  /* Watching dot — subtle, doesn't compete */
   .dot.watching {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    background: #4caf50;
+    background: #3a3a3c;
     flex-shrink: 0;
   }
 
   @keyframes pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50%       { opacity: 0.35; transform: scale(0.7); }
+    50%       { opacity: 0.3; transform: scale(0.65); }
   }
 
-  /* mini progress track on the right */
+  /* Mini progress track */
   .track {
     width: 120px;
     height: 3px;
-    background: rgba(100, 181, 246, 0.15);
+    background: rgba(255, 255, 255, 0.07);
     border-radius: 2px;
     overflow: hidden;
     flex-shrink: 0;
@@ -138,7 +140,7 @@
 
   .fill {
     height: 100%;
-    background: linear-gradient(90deg, #1e88e5, #42a5f5);
+    background: rgba(202, 138, 4, 0.7);
     border-radius: 2px;
     transition: width 0.3s ease;
   }

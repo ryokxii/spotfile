@@ -23,6 +23,9 @@
   let initState: 'idle' | 'busy' | 'ok' | 'err' = 'idle'
   let initError = ''
 
+  // Bind directly to the hidden file input for reliable cross-platform triggering
+  let fileInput: HTMLInputElement
+
   async function initEngine() {
     initState = 'busy'
     initError = ''
@@ -42,7 +45,6 @@
     if (!files || files.length === 0) return
     const paths = Array.from(files).map(f => (f as any).path || f.name)
     dispatch('indexStart', { paths, total: files.length })
-    // Reset so the same files can be re-selected
     input.value = ''
     try {
       await IndexFiles(paths)
@@ -53,6 +55,7 @@
 
   $: shortFile = currentFile ? currentFile.split('/').pop() ?? currentFile : ''
   $: percent = totalFiles > 0 ? Math.round((indexedCount / totalFiles) * 100) : 0
+  $: workersLabel = workers === 0 ? 'Auto' : String(workers)
 </script>
 
 {#if visible}
@@ -61,7 +64,7 @@
     <div class="sheet">
       <header>
         <span class="title">Settings</span>
-        <button class="close-btn" on:click={() => dispatch('close')}>
+        <button class="close-btn" on:click={() => dispatch('close')} aria-label="Close settings">
           <svg viewBox="0 0 20 20" fill="none"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
       </header>
@@ -70,7 +73,7 @@
       <section>
         <h3>Engine</h3>
         <label>
-          <span>ONNX Runtime Library</span>
+          <span>ONNX Runtime Library <span class="required">required</span></span>
           <input type="text" bind:value={libraryPath} placeholder="e.g. /opt/homebrew/lib/libonnxruntime.dylib" />
         </label>
         <label>
@@ -83,17 +86,31 @@
         </label>
         <label class="inline">
           <span>Worker threads</span>
-          <input type="number" bind:value={workers} min="0" placeholder="0 = auto" />
+          <div class="workers-wrap">
+            <input
+              type="number"
+              bind:value={workers}
+              min="0"
+              placeholder="0"
+              aria-label="Worker threads (0 = auto)"
+            />
+            <span class="workers-hint">{workersLabel}</span>
+          </div>
         </label>
 
         <div class="init-row">
-          <button class="btn-primary" on:click={initEngine} disabled={initState === 'busy'}>
+          <button
+            class="btn-primary"
+            on:click={initEngine}
+            disabled={initState === 'busy' || !libraryPath.trim()}
+            title={!libraryPath.trim() ? 'Enter the ONNX Runtime library path first' : undefined}
+          >
             {initState === 'busy' ? 'Initializing…' : 'Initialize Engine'}
           </button>
           {#if initState === 'ok'}
             <span class="badge ok">Ready</span>
           {:else if initState === 'err'}
-            <span class="badge err">{initError}</span>
+            <span class="badge err" title={initError}>{initError}</span>
           {/if}
         </div>
       </section>
@@ -102,15 +119,33 @@
       <section>
         <h3>Index Files</h3>
         <p class="hint">Select text, Markdown, or PDF files to embed and index.</p>
-        <label class="file-label">
-          <input type="file" multiple accept=".txt,.md,.pdf" on:change={handleFiles} disabled={indexing} />
-          <span class="file-btn" class:disabled={indexing}>
+
+        <!-- Hidden real input — triggered programmatically for Wails compatibility -->
+        <input
+          type="file"
+          bind:this={fileInput}
+          multiple
+          accept=".txt,.md,.pdf"
+          on:change={handleFiles}
+          disabled={indexing}
+          style="display:none"
+          aria-hidden="true"
+          tabindex="-1"
+        />
+
+        <div class="file-row">
+          <button
+            class="file-btn"
+            class:disabled={indexing}
+            disabled={indexing}
+            on:click={() => fileInput?.click()}
+          >
             {indexing ? `Indexing… ${percent}%` : 'Choose files'}
-          </span>
+          </button>
           {#if indexing && shortFile}
             <span class="current-file" title={currentFile}>{shortFile}</span>
           {/if}
-        </label>
+        </div>
 
         {#if indexing && totalFiles > 0}
           <div class="prog-track">
@@ -178,6 +213,7 @@
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
+    transition: background 0.15s;
   }
   .close-btn svg { width: 14px; height: 14px; }
   .close-btn:hover { background: rgba(255, 255, 255, 0.18); }
@@ -213,6 +249,15 @@
     color: #aeaeb2;
   }
 
+  .required {
+    font-size: 0.7rem;
+    color: rgba(202, 138, 4, 0.8);
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    margin-left: 0.4rem;
+  }
+
   input[type='text'],
   input[type='number'] {
     background: rgba(255, 255, 255, 0.06);
@@ -227,12 +272,25 @@
 
   input[type='text']:focus,
   input[type='number']:focus {
-    border-color: rgba(255, 255, 255, 0.3);
+    border-color: rgba(202, 138, 4, 0.5);
   }
 
   input[type='number'] {
-    width: 80px;
+    width: 60px;
     text-align: center;
+  }
+
+  /* Workers: number input + "Auto" label side by side */
+  .workers-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .workers-hint {
+    font-size: 0.78rem;
+    color: #636366;
+    min-width: 2.5rem;
   }
 
   .init-row {
@@ -254,7 +312,7 @@
     transition: opacity 0.15s;
   }
   .btn-primary:hover:not(:disabled) { opacity: 0.85; }
-  .btn-primary:disabled { opacity: 0.4; cursor: default; }
+  .btn-primary:disabled { opacity: 0.35; cursor: default; }
 
   .badge {
     font-size: 0.78rem;
@@ -263,7 +321,15 @@
     font-weight: 500;
   }
   .badge.ok { background: rgba(48, 209, 88, 0.15); color: #30d158; }
-  .badge.err { background: rgba(255, 69, 58, 0.15); color: #ff453a; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge.err {
+    background: rgba(255, 69, 58, 0.15);
+    color: #ff453a;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+  }
 
   .hint {
     font-size: 0.8rem;
@@ -271,24 +337,20 @@
     margin: 0 0 0.85rem;
   }
 
-  .file-label {
-    flex-direction: row;
+  /* File picker row */
+  .file-row {
+    display: flex;
     align-items: center;
     gap: 0.75rem;
     flex-wrap: wrap;
   }
 
-  .file-label input[type='file'] {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-    width: 0;
-  }
-
   .file-btn {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
     padding: 0.55rem 1.1rem;
     border-radius: 8px;
+    border: none;
     background: rgba(255, 255, 255, 0.1);
     color: #f5f5f7;
     font-size: 0.85rem;
@@ -298,7 +360,7 @@
     white-space: nowrap;
   }
 
-  label:has(input[type='file']:not(:disabled)) .file-btn:hover { background: rgba(255,255,255,0.18); }
+  .file-btn:hover:not(.disabled) { background: rgba(255,255,255,0.18); }
   .file-btn.disabled { opacity: 0.4; cursor: default; }
 
   .current-file {
@@ -316,11 +378,11 @@
     background: rgba(255,255,255,0.08);
     border-radius: 2px;
     overflow: hidden;
-    margin-top: 0.6rem;
+    margin-top: 0.75rem;
   }
   .prog-fill {
     height: 100%;
-    background: white;
+    background: rgba(202, 138, 4, 0.75);
     border-radius: 2px;
     transition: width 0.3s ease;
   }
