@@ -1,10 +1,12 @@
 <script lang="ts">
   import { InitEngine, IndexFiles, Search, StoreSize, GenerateAnswer } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
+  import PDFViewer from './PDFViewer.svelte'
 
   interface SearchResult {
     docPath: string
     chunkIdx: number
+    pageNum: number
     text: string
     score: number
   }
@@ -28,6 +30,19 @@
   let reindexing: boolean = false
   let error: string = ''
   let message: string = ''
+
+  // PDF viewer state
+  let pdfViewerPath: string = ''
+  let pdfViewerPage: number = 1
+  let showPDFViewer: boolean = false
+
+  function openResult(result: SearchResult) {
+    if (result.docPath.toLowerCase().endsWith('.pdf')) {
+      pdfViewerPath = result.docPath
+      pdfViewerPage = result.pageNum > 0 ? result.pageNum : 1
+      showPDFViewer = true
+    }
+  }
 
   const topK: number = 5
 
@@ -269,16 +284,24 @@
             <tr>
               <th>Score</th>
               <th>Document</th>
-              <th>Chunk</th>
+              <th>Page</th>
               <th>Text Preview</th>
             </tr>
           </thead>
           <tbody>
             {#each results as result (result.docPath + result.chunkIdx)}
-              <tr>
+              {@const isPDF = result.docPath.toLowerCase().endsWith('.pdf')}
+              <tr
+                class:clickable={isPDF}
+                on:click={() => openResult(result)}
+                on:keydown={(e) => e.key === 'Enter' && openResult(result)}
+                role={isPDF ? 'button' : undefined}
+                tabindex={isPDF ? 0 : undefined}
+                title={isPDF ? 'Click to open PDF at this page' : undefined}
+              >
                 <td class="score">{(result.score * 100).toFixed(1)}%</td>
-                <td class="mono">{result.docPath}</td>
-                <td>{result.chunkIdx}</td>
+                <td class="mono">{result.docPath.split('/').pop()}</td>
+                <td>{result.pageNum > 0 ? result.pageNum : '—'}</td>
                 <td>{truncateText(result.text)}</td>
               </tr>
             {/each}
@@ -286,6 +309,14 @@
         </table>
       </section>
     {/if}
+
+  {#if showPDFViewer}
+    <PDFViewer
+      docPath={pdfViewerPath}
+      initialPage={pdfViewerPage}
+      onClose={() => (showPDFViewer = false)}
+    />
+  {/if}
 
     <!-- Status Messages -->
     {#if error}
@@ -482,6 +513,14 @@
 
   .results-table tr:hover {
     background: rgba(100, 181, 246, 0.05);
+  }
+
+  tr.clickable {
+    cursor: pointer;
+  }
+
+  tr.clickable:hover td {
+    background: rgba(100, 181, 246, 0.12);
   }
 
   .score {
