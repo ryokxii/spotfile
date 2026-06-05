@@ -2,6 +2,7 @@
   import { InitEngine, IndexFiles, Search, StoreSize, GenerateAnswer } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import PDFViewer from './PDFViewer.svelte'
+  import StatusBar from './StatusBar.svelte'
 
   interface SearchResult {
     docPath: string
@@ -16,9 +17,9 @@
   let vocabPath: string = ''
   let workers: number = 0
 
-  let indexedFiles: string[] = []
   let indexedCount: number = 0
   let totalFiles: number = 0
+  let currentFile: string = ''
 
   let query: string = ''
   let results: SearchResult[] = []
@@ -71,7 +72,6 @@
       error = ''
       message = ''
       indexing = true
-      indexedFiles = []
       indexedCount = 0
       totalFiles = files.length
 
@@ -80,14 +80,15 @@
       // Listen for indexing events
       EventsOn('index:chunk', (data: any) => {
         indexedCount = data.total
-        indexedFiles = Array.from(new Set([...indexedFiles, data.path]))
+        currentFile = data.path
       })
 
       EventsOn('index:done', (total: number) => {
         indexing = false
-        message = `Indexed ${total} chunks successfully`
+        currentFile = ''
+        message = `Indexed ${total} chunks`
         const store = StoreSize()
-        message += ` (Store now contains ${store} total chunks)`
+        message += ` · Store: ${store} total`
       })
 
       // Listen for watcher events
@@ -98,11 +99,13 @@
 
       EventsOn('watcher:reindexing', (data: any) => {
         reindexing = true
-        message = `File changed, re-indexing: ${data.path}`
+        currentFile = data.path
+        message = `Re-indexing: ${data.path}`
       })
 
       EventsOn('watcher:done', () => {
         reindexing = false
+        currentFile = ''
         message = 'Re-indexing complete'
       })
 
@@ -221,27 +224,8 @@
         disabled={indexing}
         accept=".txt,.md,.pdf"
       />
-      {#if indexing}
-        <div class="progress">
-          <p>Indexing... {indexedCount} / {totalFiles} files</p>
-          <div class="progress-bar">
-            <div
-              class="progress-fill"
-              style={`width: ${totalFiles > 0 ? (indexedCount / totalFiles) * 100 : 0}%`}
-            />
-          </div>
-        </div>
-      {/if}
-      {#if watcherActive}
-        <div class="watcher-status">
-          <p class="watcher-indicator">
-            {#if reindexing}
-              🔄 Re-indexing...
-            {:else}
-              ✅ File watcher active
-            {/if}
-          </p>
-        </div>
+      {#if watcherActive && !reindexing}
+        <p class="watcher-badge">Watcher active</p>
       {/if}
     </section>
 
@@ -318,6 +302,15 @@
     />
   {/if}
 
+  <StatusBar
+    {indexing}
+    {reindexing}
+    {watcherActive}
+    {indexedCount}
+    {totalFiles}
+    {currentFile}
+  />
+
     <!-- Status Messages -->
     {#if error}
       <div class="alert alert-error">{error}</div>
@@ -340,7 +333,7 @@
     color: #e0e0e0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     overflow-y: auto;
-    padding: 2rem 0;
+    padding: 2rem 0 3rem; /* 3rem bottom clears the status bar */
   }
 
   .container {
@@ -452,43 +445,15 @@
     flex-shrink: 0;
   }
 
-  .progress {
-    margin-top: 1rem;
-  }
-
-  .progress p {
-    margin-bottom: 0.5rem;
-    font-size: 0.9rem;
-    color: #90caf9;
-  }
-
-  .progress-bar {
-    width: 100%;
-    height: 8px;
-    background: rgba(15, 28, 46, 0.6);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #42a5f5 0%, #64b5f6 100%);
-    transition: width 0.3s ease;
-  }
-
-  .watcher-status {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    background: rgba(76, 175, 80, 0.1);
-    border-left: 3px solid #4caf50;
-    border-radius: 4px;
-  }
-
-  .watcher-indicator {
-    margin: 0;
-    font-size: 0.9rem;
+  .watcher-badge {
+    display: inline-block;
+    margin-top: 0.75rem;
+    padding: 0.25rem 0.65rem;
+    background: rgba(76, 175, 80, 0.12);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    border-radius: 12px;
+    font-size: 0.78rem;
     color: #81c784;
-    font-weight: 500;
   }
 
   .results-table {
