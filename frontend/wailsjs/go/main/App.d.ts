@@ -3,16 +3,16 @@
 import {main} from '../models';
 import {engine} from '../models';
 
+export function GenerateAnswer(arg1:string,arg2:number):Promise<string>;
+
 export function Greet(arg1:string):Promise<string>;
 
 export function IndexFiles(arg1:Array<string>):Promise<void>;
 
 export function InitEngine(arg1:main.EngineConfig):Promise<void>;
 
+export function ReadFileAsBase64(arg1:string):Promise<string>;
+
 export function Search(arg1:string,arg2:number):Promise<Array<engine.SearchResult>>;
 
 export function StoreSize():Promise<number>;
-
-export function GenerateAnswer(arg1:string,arg2:number):Promise<string>;
-
-export function ReadFileAsBase64(arg1:string):Promise<string>;
