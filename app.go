@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"spotfile/engine"
 
@@ -16,6 +17,7 @@ import (
 
 type App struct {
 	ctx     context.Context
+	engMu   sync.Mutex   // serialises engine init so IndexFolder waits if startup is mid-init
 	eng     *engine.Engine
 	store   *engine.VectorStore
 	watcher *engine.FileWatcher
@@ -66,6 +68,12 @@ type EngineConfig struct {
 
 // InitEngine initialises (or re-initialises) the ONNX engine.
 func (a *App) InitEngine(cfg EngineConfig) error {
+	a.engMu.Lock()
+	defer a.engMu.Unlock()
+	return a.initEngineLocked(cfg)
+}
+
+func (a *App) initEngineLocked(cfg EngineConfig) error {
 	if a.eng != nil {
 		a.eng.Close()
 		a.eng = nil
@@ -93,6 +101,9 @@ func (a *App) InitEngine(cfg EngineConfig) error {
 		Workers:     cfg.Workers,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "dlopen") || strings.Contains(err.Error(), "no such file") {
+			return fmt.Errorf("ONNX Runtime not found — run: brew install onnxruntime")
+		}
 		return err
 	}
 
@@ -118,9 +129,16 @@ func (a *App) SelectFolder() (string, error) {
 // Emits: "index:start" (with total file count), "index:chunk", "index:done",
 // and "watcher:started" once the watcher is running.
 func (a *App) IndexFolder(dir string) error {
+	// If startup's init goroutine is still running, this blocks until it
+	// finishes. If it failed or hasn't started yet, we init here instead.
+	a.engMu.Lock()
 	if a.eng == nil {
-		return fmt.Errorf("engine not initialised")
+		if err := a.initEngineLocked(EngineConfig{}); err != nil {
+			a.engMu.Unlock()
+			return fmt.Errorf("engine init: %w", err)
+		}
 	}
+	a.engMu.Unlock()
 
 	var paths []string
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {

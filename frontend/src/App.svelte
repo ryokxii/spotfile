@@ -53,7 +53,6 @@
 
   $: hint =
     engineError ? engineError.split('\n')[0]
-    : !engineReady ? 'Starting up…'
     : phase === 'idle' && !hasFiles ? 'Choose a folder to get started'
     : phase === 'idle' ? 'Ready — type your question and press Enter'
     : phase === 'loading' ? 'Searching…'
@@ -84,7 +83,6 @@
   })
 
   async function pickFolder() {
-    if (!engineReady) return
     try {
       const dir = await SelectFolder()
       if (!dir) return
@@ -178,8 +176,10 @@
 
         {#if phase === 'loading'}
           <span class="spinner" aria-label="Searching" role="status" />
-        {:else if engineReady}
-          <!-- Folder picker button -->
+        {:else if engineError}
+          <span class="engine-error-dot" title={engineError} aria-label="Engine error" />
+        {:else}
+          <!-- Folder picker button — always visible -->
           <button
             class="icon-btn"
             title={hasFiles ? `Indexed: ${filename(selectedFolder) || 'folder'} — click to re-index` : 'Choose a folder to index'}
@@ -187,44 +187,23 @@
             aria-label="Choose folder to index"
           >
             {#if hasFiles}
-              <!-- folder-check icon -->
               <svg viewBox="0 0 20 20" fill="none">
                 <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
                 <path d="M7 11l2 2 4-4" stroke="rgba(202,138,4,0.9)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {:else}
-              <!-- folder-open icon -->
               <svg viewBox="0 0 20 20" fill="none">
                 <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
                 <path d="M2 9h16" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
               </svg>
             {/if}
           </button>
-        {:else if engineError}
-          <!-- Error indicator -->
-          <span class="engine-error-dot" title={engineError} aria-label="Engine error" />
-        {:else}
-          <!-- Init spinner -->
-          <span class="spinner-small" aria-label="Starting engine" role="status" />
         {/if}
       </div>
 
       <p class="hint" class:error={phase === 'error' || !!engineError}>{hint}</p>
     </div>
 
-    <!-- No-files CTA (only shown when engine ready but nothing indexed yet) -->
-    {#if phase === 'idle' && engineReady && !hasFiles && !indexing}
-      <div class="folder-cta" transition:fade={{ duration: 150 }}>
-        <button class="folder-cta-btn" on:click={pickFolder}>
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-            <path d="M12 11v6M9 14l3-3 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Choose a folder to index
-        </button>
-        <p class="cta-sub">Indexes .txt, .md, and .pdf files recursively</p>
-      </div>
-    {/if}
 
     <!-- Results area -->
     {#if phase === 'results'}
@@ -460,16 +439,6 @@
     animation: spin 0.8s linear infinite;
   }
 
-  .spinner-small {
-    width: 14px;
-    height: 14px;
-    border: 1.5px solid rgba(255,255,255,0.1);
-    border-top-color: rgba(255,255,255,0.4);
-    border-radius: 50%;
-    flex-shrink: 0;
-    animation: spin 1s linear infinite;
-  }
-
   .engine-error-dot {
     width: 8px;
     height: 8px;
@@ -489,41 +458,6 @@
 
   .hint.error { color: #ff453a; }
 
-  /* ── Folder CTA ─────────────────────────────────────────── */
-  .folder-cta {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.6rem;
-    margin-top: 2rem;
-  }
-
-  .folder-cta-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.75rem 1.5rem;
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.05);
-    color: #e5e5ea;
-    font-size: 0.95rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .folder-cta-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
-
-  .folder-cta-btn:hover {
-    background: rgba(202,138,4,0.1);
-    border-color: rgba(202,138,4,0.35);
-  }
-
-  .cta-sub {
-    font-size: 0.78rem;
-    color: #48484a;
-  }
 
   /* ── Results ─────────────────────────────────────────────── */
   .results-area {
