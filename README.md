@@ -32,13 +32,13 @@ Download the ONNX Runtime shared library from the [official releases](https://gi
 
 ### 2. Embedding model
 
-Spotfile uses [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (int8 ONNX export). Download the two required files and place them in `~/.spotfile/`:
+Spotfile uses [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (ONNX export). Download the two required files and place them in `~/.spotfile/`:
 
 ```bash
 mkdir -p ~/.spotfile
 
-# model weights
-curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model_quantized.onnx" \
+# model weights (~127 MB)
+curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx" \
      -o ~/.spotfile/model.onnx
 
 # vocabulary
@@ -49,7 +49,7 @@ curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.txt" \
 > If you have `git-lfs` installed you can also clone the repo:
 > ```bash
 > git clone https://huggingface.co/BAAI/bge-small-en-v1.5 /tmp/bge
-> cp /tmp/bge/onnx/model_quantized.onnx ~/.spotfile/model.onnx
+> cp /tmp/bge/onnx/model.onnx ~/.spotfile/model.onnx
 > cp /tmp/bge/vocab.txt ~/.spotfile/vocab.txt
 > ```
 

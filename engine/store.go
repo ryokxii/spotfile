@@ -1,6 +1,10 @@
 package engine
 
 import (
+	"encoding/gob"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 )
@@ -21,26 +25,45 @@ type SearchResult struct {
 	Score    float32 `json:"score"`
 }
 
+// VectorStore holds embedded chunks keyed by document path. Keying by DocPath
+// (rather than a flat slice) lets a re-index of a single file replace exactly
+// that file's chunks in O(1) instead of accumulating duplicates.
 type VectorStore struct {
-	mu     sync.RWMutex
-	chunks []EmbeddedChunk
+	mu          sync.RWMutex
+	docs        map[string][]EmbeddedChunk
+	persistPath string // where Persist() writes; empty disables autosave
 }
 
+// Add appends a chunk to its document's bucket.
 func (vs *VectorStore) Add(c EmbeddedChunk) {
 	vs.mu.Lock()
-	vs.chunks = append(vs.chunks, c)
-	vs.mu.Unlock()
+	defer vs.mu.Unlock()
+	if vs.docs == nil {
+		vs.docs = make(map[string][]EmbeddedChunk)
+	}
+	vs.docs[c.DocPath] = append(vs.docs[c.DocPath], c)
 }
 
+// Len returns the total number of stored chunks across all documents.
 func (vs *VectorStore) Len() int {
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
-	return len(vs.chunks)
+	n := 0
+	for _, chunks := range vs.docs {
+		n += len(chunks)
+	}
+	return n
 }
 
-// Search returns the topK nearest neighbors by cosine similarity.
-// Assumes embeddings are already L2-normalized, so similarity == dot product.
+// Search returns the topK nearest chunks by cosine similarity. Embeddings are
+// assumed L2-normalized, so similarity == dot product. Returns an empty slice
+// for an empty query or non-positive topK. Candidates whose embedding
+// dimensionality differs from the query are skipped rather than mis-scored.
 func (vs *VectorStore) Search(query []float32, topK int) []SearchResult {
+	if len(query) == 0 || topK <= 0 {
+		return []SearchResult{}
+	}
+
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 
@@ -48,11 +71,19 @@ func (vs *VectorStore) Search(query []float32, topK int) []SearchResult {
 		c     EmbeddedChunk
 		score float32
 	}
-	candidates := make([]scored, 0, len(vs.chunks))
-	for _, c := range vs.chunks {
-		candidates = append(candidates, scored{c, dot(query, c.Embedding)})
+	var candidates []scored
+	for _, chunks := range vs.docs {
+		for _, c := range chunks {
+			if len(c.Embedding) != len(query) {
+				continue // dimensionality mismatch — not comparable
+			}
+			candidates = append(candidates, scored{c, dot(query, c.Embedding)})
+		}
 	}
-	sort.Slice(candidates, func(i, j int) bool {
+
+	// SliceStable keeps ranking deterministic when scores tie (map iteration
+	// order is otherwise random).
+	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].score > candidates[j].score
 	})
 
@@ -78,4 +109,94 @@ func dot(a, b []float32) float32 {
 		s += a[i] * b[i]
 	}
 	return s
+}
+
+// RemoveDoc deletes all chunks belonging to docPath. Call before re-adding a
+// changed file so a re-index replaces its chunks instead of duplicating them.
+func (vs *VectorStore) RemoveDoc(docPath string) {
+	vs.mu.Lock()
+	delete(vs.docs, docPath)
+	vs.mu.Unlock()
+}
+
+// RemoveDocs deletes all chunks for each of the given document paths.
+func (vs *VectorStore) RemoveDocs(paths []string) {
+	vs.mu.Lock()
+	for _, p := range paths {
+		delete(vs.docs, p)
+	}
+	vs.mu.Unlock()
+}
+
+// SetPersistPath configures the file Persist() writes to. Call once at startup.
+func (vs *VectorStore) SetPersistPath(path string) {
+	vs.mu.Lock()
+	vs.persistPath = path
+	vs.mu.Unlock()
+}
+
+// Persist writes the store to its configured path. No-op when unset.
+func (vs *VectorStore) Persist() error {
+	vs.mu.RLock()
+	path := vs.persistPath
+	vs.mu.RUnlock()
+	if path == "" {
+		return nil
+	}
+	return vs.Save(path)
+}
+
+// Save gob-encodes the store to path via a temp file + atomic rename, so a
+// crash mid-write can never leave a truncated store on disk.
+func (vs *VectorStore) Save(path string) error {
+	vs.mu.RLock()
+	snapshot := make(map[string][]EmbeddedChunk, len(vs.docs))
+	for k, chunks := range vs.docs {
+		cp := make([]EmbeddedChunk, len(chunks))
+		copy(cp, chunks) // decouple slice from concurrent appends; embeddings are never mutated in place
+		snapshot[k] = cp
+	}
+	vs.mu.RUnlock()
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".store-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp store: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+
+	if err := gob.NewEncoder(tmp).Encode(snapshot); err != nil {
+		tmp.Close()
+		return fmt.Errorf("encode store: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp store: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace store: %w", err)
+	}
+	return nil
+}
+
+// Load replaces the in-memory store with the gob-encoded contents of path. A
+// missing file is not an error — the store simply stays empty.
+func (vs *VectorStore) Load(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer f.Close()
+
+	docs := make(map[string][]EmbeddedChunk)
+	if err := gob.NewDecoder(f).Decode(&docs); err != nil {
+		return fmt.Errorf("decode store: %w", err)
+	}
+
+	vs.mu.Lock()
+	vs.docs = docs
+	vs.mu.Unlock()
+	return nil
 }

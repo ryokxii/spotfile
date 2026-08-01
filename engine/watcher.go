@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // FileWatcher monitors filesystem for changes and triggers re-indexing.
@@ -19,14 +20,13 @@ type FileWatcher struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
-	engine       *Engine
-	store        *VectorStore
-	reindexChan  chan struct{}
+	indexer      *Indexer
 	closed       chan struct{}
 }
 
-// StartWatcher begins watching for filesystem changes on the given paths.
-func StartWatcher(ctx context.Context, paths []string, engine *Engine, store *VectorStore) (*FileWatcher, error) {
+// StartWatcher begins watching for filesystem changes on the given paths. Changed
+// files are re-indexed through the shared indexer at urgent priority.
+func StartWatcher(ctx context.Context, paths []string, indexer *Indexer) (*FileWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
@@ -47,9 +47,7 @@ func StartWatcher(ctx context.Context, paths []string, engine *Engine, store *Ve
 		debounceTime: 2 * time.Second,
 		ctx:          watchCtx,
 		cancel:       cancel,
-		engine:       engine,
-		store:        store,
-		reindexChan:  make(chan struct{}, 1),
+		indexer:      indexer,
 		closed:       make(chan struct{}),
 	}
 
@@ -107,18 +105,23 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 	})
 }
 
-// reindexPath re-indexes a single changed file.
+// reindexPath enqueues a changed file at urgent priority so it jumps ahead of any
+// background history scan. The indexer handles de-dup and persistence; the hooks
+// emit watcher:reindexing / watcher:done so the StatusBar reflects live activity.
 func (fw *FileWatcher) reindexPath(path string) {
 	log.Printf("watcher: detected change in %s, re-indexing...", path)
-	chunks := fw.engine.IndexFiles(fw.ctx, []string{path})
-	count := 0
-	for chunk := range chunks {
-		fw.store.Add(chunk)
-		count++
-	}
-	if count > 0 {
-		log.Printf("watcher: re-indexed %s (%d chunks)", path, count)
-	}
+	fw.indexer.Enqueue(
+		[]PathPriority{{Path: path, Priority: PriorityUrgent}},
+		IndexHooks{
+			OnStart: func() {
+				wailsruntime.EventsEmit(fw.ctx, "watcher:reindexing", map[string]any{"path": path})
+			},
+			OnDone: func(chunks int) {
+				log.Printf("watcher: re-indexed %s (%d chunks)", path, chunks)
+				wailsruntime.EventsEmit(fw.ctx, "watcher:done", nil)
+			},
+		},
+	)
 }
 
 // Stop gracefully shuts down the file watcher.

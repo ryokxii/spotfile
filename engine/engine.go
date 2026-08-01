@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	MaxSeqLen     = 512
-	maxChunkWords = 400 // leaves headroom for [CLS]/[SEP] plus subword expansion
-	chunkOverlap  = 50
-	defaultBatchSize = 32 // embed 32 chunks per ONNX call
-	maxDocBuffer = 256 // limit document buffer to prevent memory bloat with 100K+ files
+	MaxSeqLen        = 512
+	maxChunkWords    = 400 // leaves headroom for [CLS]/[SEP] plus subword expansion
+	chunkOverlap     = 50
+	defaultBatchSize = 32  // embed 32 chunks per ONNX call
+	maxDocBuffer     = 256 // limit document buffer to prevent memory bloat with 100K+ files
 )
 
 // inputNames matches the bge-small-en-v1.5 ONNX export order.
@@ -52,14 +52,55 @@ type embedResult struct {
 	err error
 }
 
+// CountChunks returns the exact number of chunks IndexFiles will create for
+// paths. It is used to provide a meaningful indexing percentage before model
+// inference begins.
+func CountChunks(ctx context.Context, paths []string) (int, error) {
+	count := 0
+	for _, path := range paths {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+		}
+
+		if strings.HasSuffix(strings.ToLower(path), ".pdf") {
+			pages, err := ReadPDFPages(path)
+			if err != nil {
+				log.Printf("index: skip pdf while counting %s: %v", path, err)
+				continue
+			}
+			for _, page := range pages {
+				count += len(Chunk(page.Text, maxChunkWords, chunkOverlap))
+			}
+			continue
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("index: skip while counting %s: %v", path, err)
+			continue
+		}
+		count += len(Chunk(string(data), maxChunkWords, chunkOverlap))
+	}
+	return count, nil
+}
+
 func New(cfg Config) (*Engine, error) {
 	if cfg.Workers <= 0 {
 		cfg.Workers = runtime.NumCPU()
 	}
 
-	ort.SetSharedLibraryPath(cfg.LibraryPath)
-	if err := ort.InitializeEnvironment(); err != nil {
-		return nil, fmt.Errorf("ort init: %w", err)
+	// The ORT environment is a process-global singleton. Initialize it once and
+	// reuse it across Engine instances — re-initializing returns an error, and a
+	// previous partial init (env up, but a later New step failed) must not poison
+	// subsequent New calls. SetSharedLibraryPath is only honoured before the
+	// first init, so skip it once the env is already up.
+	if !ort.IsInitialized() {
+		ort.SetSharedLibraryPath(cfg.LibraryPath)
+		if err := ort.InitializeEnvironment(); err != nil {
+			return nil, fmt.Errorf("ort init: %w", err)
+		}
 	}
 
 	tok, err := LoadTokenizer(cfg.VocabPath, MaxSeqLen)
@@ -149,36 +190,60 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			docBufSize = maxDocBuffer
 		}
 		pages := make(chan page, docBufSize)
-		var readWg sync.WaitGroup
-		for _, p := range paths {
-			readWg.Add(1)
-			go func(path string) {
-				defer readWg.Done()
-				if strings.HasSuffix(strings.ToLower(path), ".pdf") {
-					pdfPages, err := ReadPDFPages(path)
-					if err != nil {
-						log.Printf("index: skip pdf %s: %v", path, err)
+
+		// Feed paths through a channel so a bounded pool of readers can drain
+		// them, rather than spawning one goroutine per file (which explodes on
+		// 100K+ collections). A closer goroutine keeps the producer non-blocking.
+		pathsCh := make(chan string, docBufSize)
+		go func() {
+			defer close(pathsCh)
+			for _, p := range paths {
+				select {
+				case pathsCh <- p:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		readOne := func(path string) {
+			if strings.HasSuffix(strings.ToLower(path), ".pdf") {
+				pdfPages, err := ReadPDFPages(path)
+				if err != nil {
+					log.Printf("index: skip pdf %s: %v", path, err)
+					return
+				}
+				for _, pp := range pdfPages {
+					select {
+					case pages <- page{path: path, pageNum: pp.PageNum, text: pp.Text}:
+					case <-ctx.Done():
 						return
 					}
-					for _, pp := range pdfPages {
-						select {
-						case pages <- page{path: path, pageNum: pp.PageNum, text: pp.Text}:
-						case <-ctx.Done():
-							return
-						}
-					}
-					return
 				}
-				data, err := os.ReadFile(path)
-				if err != nil {
-					log.Printf("index: skip %s: %v", path, err)
-					return
+				return
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				log.Printf("index: skip %s: %v", path, err)
+				return
+			}
+			select {
+			case pages <- page{path: path, pageNum: 0, text: string(data)}:
+			case <-ctx.Done():
+			}
+		}
+
+		// Bounded reader pool — I/O parallelism capped at Workers, matching the
+		// Stage 3 embed-pool idiom below.
+		var readWg sync.WaitGroup
+		for range e.cfg.Workers {
+			readWg.Add(1)
+			go func() {
+				defer readWg.Done()
+				for path := range pathsCh {
+					readOne(path)
 				}
-				select {
-				case pages <- page{path: path, pageNum: 0, text: string(data)}:
-				case <-ctx.Done():
-				}
-			}(p)
+			}()
 		}
 		go func() {
 			readWg.Wait()
@@ -337,12 +402,24 @@ func l2Normalize(v []float32) []float32 {
 	return out
 }
 
+// Close stops the worker pool and frees the ONNX session. It deliberately does
+// NOT destroy the global ORT environment — that singleton is shared across
+// Engine instances and outlives any single Engine. Tear it down once at process
+// exit via ShutdownRuntime.
 func (e *Engine) Close() {
 	e.closeOnce.Do(func() {
 		close(e.closed)
 		close(e.jobs)
 		e.wg.Wait()
 		e.session.Destroy()
-		ort.DestroyEnvironment()
 	})
+}
+
+// ShutdownRuntime destroys the process-global ORT environment if it was
+// initialized. Call once during application shutdown, after all engines are
+// closed. Safe to call when the environment was never initialized.
+func ShutdownRuntime() {
+	if ort.IsInitialized() {
+		_ = ort.DestroyEnvironment()
+	}
 }
