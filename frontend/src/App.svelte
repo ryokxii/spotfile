@@ -33,8 +33,11 @@
   // Indexing (forwarded to StatusBar)
   let indexing = false
   let indexedCount = 0
+  let indexedDocuments = 0
+  let totalChunks = 0
   let totalFiles = 0
   let currentFile = ''
+  let indexedPaths = new Set<string>()
   let watcherActive = false
   let reindexing = false
 
@@ -66,12 +69,22 @@
     EventsOn('index:start', (data: any) => {
       indexing = true
       indexedCount = 0
+      indexedDocuments = 0
+      totalChunks = 0
       totalFiles = data.total
+      indexedPaths = new Set<string>()
       selectedFolder = data.dir
+    })
+    EventsOn('index:prepared', (data: any) => {
+      totalChunks = data.totalChunks
     })
     EventsOn('index:chunk', (data: any) => {
       indexedCount = data.total
       currentFile = data.path
+      if (!indexedPaths.has(data.path)) {
+        indexedPaths.add(data.path)
+        indexedDocuments = indexedPaths.size
+      }
     })
     EventsOn('index:done', () => {
       indexing = false
@@ -288,6 +301,8 @@
     {reindexing}
     {watcherActive}
     {indexedCount}
+    {indexedDocuments}
+    {totalChunks}
     {totalFiles}
     {currentFile}
   />

@@ -3,10 +3,12 @@
   export let reindexing: boolean = false
   export let watcherActive: boolean = false
   export let indexedCount: number = 0
+  export let indexedDocuments: number = 0
+  export let totalChunks: number = 0
   export let totalFiles: number = 0
   export let currentFile: string = ''
 
-  $: percent = totalFiles > 0 ? Math.round((indexedCount / totalFiles) * 100) : 0
+  $: chunkPercent = totalChunks > 0 ? Math.min(100, Math.round((indexedCount / totalChunks) * 100)) : 0
   $: shortName = currentFile ? currentFile.split('/').pop() ?? currentFile : ''
 </script>
 
@@ -19,10 +21,12 @@
         {#if currentFile}
           <span class="filename" title={currentFile}>{shortName}</span>
         {/if}
-        <span class="count">{indexedCount} chunks</span>
-        {#if totalFiles > 0}
+        {#if totalChunks > 0}
+          <span class="files">{indexedDocuments} of {totalFiles} file{totalFiles !== 1 ? 's' : ''}</span>
           <span class="sep">·</span>
-          <span class="files">{percent}% of {totalFiles} file{totalFiles !== 1 ? 's' : ''}</span>
+          <span class="count">{chunkPercent}% of chunks indexed</span>
+        {:else if totalFiles > 0}
+          <span class="files">Preparing {totalFiles} file{totalFiles !== 1 ? 's' : ''}…</span>
         {/if}
       {:else if reindexing}
         <span class="pulse reindex" />
@@ -36,9 +40,9 @@
       {/if}
     </div>
 
-    {#if indexing && totalFiles > 0}
+    {#if indexing && totalChunks > 0}
       <div class="track">
-        <div class="fill" style="width:{percent}%" />
+        <div class="fill" style="width:{chunkPercent}%" />
       </div>
     {/if}
   </div>
