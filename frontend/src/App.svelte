@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { fade } from 'svelte/transition'
+  import { fade, fly } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
   import { Search, GenerateAnswer, SelectFolder, IndexFolder } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import PDFViewer from './PDFViewer.svelte'
@@ -76,8 +77,9 @@
       indexing = false
       currentFile = ''
       hasFiles = true
+      engineReady = true // reaching index:done proves the engine is ready, even if engine:ready was missed
     })
-    EventsOn('watcher:started', () => { watcherActive = true })
+    EventsOn('watcher:started', () => { watcherActive = true; engineReady = true })
     EventsOn('watcher:reindexing', (data: any) => { reindexing = true; currentFile = data.path })
     EventsOn('watcher:done', () => { reindexing = false; currentFile = '' })
   })
@@ -168,7 +170,7 @@
           class="search-input"
           bind:value={query}
           placeholder={hasFiles ? 'Search your files…' : 'Index a folder to start searching…'}
-          disabled={phase === 'loading' || !engineReady || !hasFiles}
+          disabled={!engineReady || !hasFiles}
           on:keydown={(e) => e.key === 'Enter' && search()}
           autocomplete="off"
           spellcheck="false"
@@ -237,7 +239,7 @@
 
         {#if results.length > 0}
           <div class="result-list">
-            {#each results as r (r.docPath + r.chunkIdx)}
+            {#each results as r, i (r.docPath + r.chunkIdx)}
               {@const isPDF = r.docPath.toLowerCase().endsWith('.pdf')}
               <button
                 class="result-card"
@@ -245,6 +247,7 @@
                 on:click={() => isPDF && openResult(r)}
                 tabindex={isPDF ? 0 : -1}
                 aria-disabled={!isPDF}
+                in:fly={{ y: 12, duration: 300, delay: i * 70, easing: cubicOut }}
               >
                 <svg class="file-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
@@ -372,6 +375,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
+    position: sticky;      /* stay in view while results scroll below */
+    top: 0;
+    z-index: 5;
+    background: #0c0c0f;
+    padding: 0.75rem 0;
   }
 
   .search-bar {
