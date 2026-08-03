@@ -33,9 +33,11 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:  "Spotfile",
-		Width:  1024,
-		Height: 768,
+		Title:     "Spotfile",
+		Width:     1440,
+		Height:    900,
+		MinWidth:  1000,
+		MinHeight: 640,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

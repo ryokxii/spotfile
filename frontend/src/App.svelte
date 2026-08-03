@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { fade, fly } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
-  import { Search, GenerateAnswer, SelectFolder, IndexFolder } from '../wailsjs/go/main/App.js'
+  import { Search, SelectFolder, IndexFolder } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import PDFViewer from './PDFViewer.svelte'
   import StatusBar from './StatusBar.svelte'
@@ -27,8 +27,8 @@
   // Search
   let query = ''
   let results: SearchResult[] = []
-  let answer = ''
   let searchError = ''
+  let activeKey = '' // which result is currently open in the side preview
 
   // Indexing (forwarded to StatusBar)
   let indexing = false
@@ -48,12 +48,6 @@
   let showPDFViewer = false
 
   const topK = 5
-
-  $: sourcePDFs = [...new Set(
-    results
-      .filter(r => r.docPath.toLowerCase().endsWith('.pdf'))
-      .map(r => r.docPath)
-  )]
 
   $: hint =
     engineError ? engineError.split('\n')[0]
@@ -113,16 +107,11 @@
 
     phase = 'loading'
     results = []
-    answer = ''
     searchError = ''
+    activeKey = ''
 
     try {
-      const [searchRes, answerRes] = await Promise.allSettled([
-        Search(q, topK),
-        GenerateAnswer(q, topK),
-      ])
-      results = searchRes.status === 'fulfilled' ? (searchRes.value ?? []) : []
-      answer = answerRes.status === 'fulfilled' ? (answerRes.value ?? '') : ''
+      results = (await Search(q, topK)) ?? []
       phase = 'results'
     } catch (e: any) {
       searchError = e?.message || String(e)
@@ -130,17 +119,28 @@
     }
   }
 
-  function openResult(result: SearchResult) {
-    if (result.docPath.toLowerCase().endsWith('.pdf')) {
-      pdfViewerPath = result.docPath
-      pdfViewerPage = result.pageNum > 0 ? result.pageNum : 1
-      pdfViewerHighlight = result.text
-      showPDFViewer = true
-    }
+  // Unique per result — chunkIdx alone collides across pages (it's the chunk
+  // index within a page), so include docPath and pageNum.
+  function keyOf(r: SearchResult) {
+    return `${r.docPath}|${r.pageNum}|${r.chunkIdx}`
   }
 
-  function getFirstResult(pdf: string): SearchResult | undefined {
-    return results.find(r => r.docPath === pdf)
+  function openResult(result: SearchResult) {
+    if (!result.docPath.toLowerCase().endsWith('.pdf')) return
+    pdfViewerPath = result.docPath
+    pdfViewerPage = result.pageNum > 0 ? result.pageNum : 1
+    pdfViewerHighlight = result.text
+    showPDFViewer = true
+    activeKey = keyOf(result)
+  }
+
+  function closePreview() {
+    showPDFViewer = false
+    activeKey = ''
+  }
+
+  function excerpt(text: string) {
+    return text.replace(/\s+/g, ' ').trim()
   }
 
   function filename(path: string) {
@@ -155,8 +155,10 @@
 </script>
 
 <!-- ── Root ───────────────────────────────────────────────────── -->
-<div class="root">
-  <div class="column" class:in-results={phase === 'results'}>
+<svelte:window on:keydown={(e) => e.key === 'Escape' && showPDFViewer && closePreview()} />
+<div class="root" class:split={showPDFViewer}>
+  <div class="workspace">
+    <div class="column" class:in-results={phase === 'results'}>
 
     {#if phase === 'idle'}
       <div class="logo-area" transition:fade={{ duration: 180 }}>
@@ -223,78 +225,56 @@
     <!-- Results area -->
     {#if phase === 'results'}
       <div class="results-area">
-
-        {#if answer}
-          <div class="answer-block">
-            <span class="label">Answer</span>
-            <p class="answer-text">{answer}</p>
-
-            {#if sourcePDFs.length > 0}
-              <div class="chips">
-                {#each sourcePDFs as pdf}
-                  {@const first = getFirstResult(pdf)}
-                  <button
-                    class="chip"
-                    on:click={() => first && openResult(first)}
-                    title={pdf}
-                  >
-                    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" class="chip-icon">
-                      <rect x="2" y="1" width="10" height="13" rx="2" stroke="currentColor" stroke-width="1.4"/>
-                      <path d="M5 5h5M5 8h5M5 11h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                    </svg>
-                    {filename(pdf)}
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
-
         {#if results.length > 0}
           <div class="result-list">
-            {#each results as r, i (r.docPath + r.chunkIdx)}
+            {#each results as r, i (keyOf(r))}
               {@const isPDF = r.docPath.toLowerCase().endsWith('.pdf')}
-              <button
-                class="result-card"
-                class:clickable={isPDF}
-                on:click={() => isPDF && openResult(r)}
-                tabindex={isPDF ? 0 : -1}
-                aria-disabled={!isPDF}
+              <article
+                class="result"
+                class:active={keyOf(r) === activeKey}
                 in:fly={{ y: 12, duration: 300, delay: i * 70, easing: cubicOut }}
               >
-                <svg class="file-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-                  <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-
-                <div class="file-info">
-                  <span class="file-name">{filename(r.docPath)}</span>
-                  <span class="file-path">{dirpath(r.docPath)}</span>
+                <div class="result-head">
+                  <svg class="file-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                    <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span class="file-name" title={r.docPath}>{filename(r.docPath)}</span>
+                  {#if isPDF}
+                    <span class="page-badge">p.{r.pageNum || 1}</span>
+                    <button
+                      class="open-btn"
+                      on:click={() => openResult(r)}
+                      title="Preview at page {r.pageNum || 1}"
+                    >
+                      Open ▸
+                    </button>
+                  {/if}
                 </div>
-
-                {#if isPDF}
-                  <span class="page-badge">p.{r.pageNum || 1}</span>
-                {/if}
-
-                <div class="rel-bar" style="--rel:{Math.min(r.score, 1)}" title="Relevance: {r.score.toFixed(2)}"></div>
-              </button>
+                <p class="result-path">{dirpath(r.docPath)}</p>
+                <p class="result-text">{excerpt(r.text)}</p>
+              </article>
             {/each}
           </div>
+        {:else}
+          <p class="empty-results">No matching passages found.</p>
         {/if}
-
       </div>
     {/if}
 
-  </div>
+    </div>
 
-  {#if showPDFViewer}
-    <PDFViewer
-      docPath={pdfViewerPath}
-      initialPage={pdfViewerPage}
-      highlightText={pdfViewerHighlight}
-      onClose={() => (showPDFViewer = false)}
-    />
-  {/if}
+    {#if showPDFViewer}
+      <div class="pdf-pane">
+        <PDFViewer
+          docPath={pdfViewerPath}
+          initialPage={pdfViewerPage}
+          highlightText={pdfViewerHighlight}
+          onClose={closePreview}
+        />
+      </div>
+    {/if}
+  </div>
 
   <StatusBar
     {indexing}
@@ -344,9 +324,17 @@
     padding: 0 1rem 4rem;
   }
 
-  .column {
+  .workspace {
     width: 100%;
     max-width: 660px;
+    display: flex;
+    flex-direction: row;
+    min-width: 0;
+  }
+
+  .column {
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -356,6 +344,35 @@
 
   .column.in-results {
     padding-top: 6vh;
+  }
+
+  /* ── Split view: results on the left, PDF preview on the right ── */
+  .root.split {
+    align-items: stretch;
+    height: 100vh;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .root.split .workspace {
+    max-width: none;
+    height: 100vh;
+  }
+
+  .root.split .column {
+    flex: 0 0 42%;
+    max-width: 620px;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 0 1.25rem 3rem;
+  }
+
+  .pdf-pane {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 100vh;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    background: #141414;
   }
 
   /* ── Logo ────────────────────────────────────────────────── */
@@ -490,108 +507,53 @@
     gap: 1.25rem;
   }
 
-  .answer-block {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-  }
-
-  .label {
-    font-size: 0.68rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+  .empty-results {
     color: #636366;
+    font-size: 0.9rem;
+    padding: 0.5rem 0.25rem;
   }
-
-  .answer-text {
-    font-size: 0.97rem;
-    line-height: 1.75;
-    color: #e5e5ea;
-    white-space: pre-wrap;
-  }
-
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.35rem 0.75rem;
-    border-radius: 20px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.05);
-    color: #aeaeb2;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-    white-space: nowrap;
-  }
-
-  .chip:hover {
-    background: rgba(202,138,4,0.12);
-    border-color: rgba(202,138,4,0.35);
-    color: #f5f5f7;
-  }
-
-  .chip-icon { width: 13px; height: 13px; flex-shrink: 0; }
 
   .result-list {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.6rem;
   }
 
-  .result-card {
+  .result {
     display: flex;
-    align-items: center;
-    gap: 0.85rem;
-    padding: 0.8rem 0.9rem;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.85rem 0.95rem;
     border-radius: 10px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid transparent;
-    cursor: default;
-    text-align: left;
-    width: 100%;
-    color: inherit;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     transition: background 0.15s, border-color 0.15s;
   }
 
-  .result-card.clickable { cursor: pointer; }
-
-  .result-card.clickable:hover {
-    background: rgba(255,255,255,0.07);
-    border-color: rgba(255,255,255,0.1);
+  .result.active {
+    border-color: rgba(202, 138, 4, 0.55);
+    background: rgba(202, 138, 4, 0.08);
   }
 
-  .result-card[aria-disabled='true'] { cursor: default; opacity: 0.6; }
-
-  .file-icon { width: 22px; height: 22px; color: #48484a; flex-shrink: 0; }
-
-  .file-info {
-    flex: 1;
-    min-width: 0;
+  .result-head {
     display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  .file-icon {
+    width: 18px;
+    height: 18px;
+    color: #636366;
+    flex-shrink: 0;
   }
 
   .file-name {
-    font-size: 0.88rem;
-    font-weight: 500;
-    color: #e5e5ea;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .file-path {
-    font-size: 0.75rem;
-    color: #48484a;
+    flex: 1;
+    min-width: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #f5f5f7;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -599,29 +561,49 @@
 
   .page-badge {
     font-size: 0.72rem;
-    color: rgba(202,138,4,0.75);
+    color: rgba(202, 138, 4, 0.85);
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;
     white-space: nowrap;
   }
 
-  .rel-bar {
-    width: 36px;
-    height: 3px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 2px;
-    overflow: hidden;
+  .open-btn {
     flex-shrink: 0;
-    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.28rem 0.7rem;
+    border-radius: 7px;
+    border: 1px solid rgba(202, 138, 4, 0.4);
+    background: rgba(202, 138, 4, 0.12);
+    color: rgba(202, 138, 4, 0.95);
+    font-size: 0.76rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
   }
 
-  .rel-bar::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    width: calc(var(--rel) * 100%);
-    background: rgba(202, 138, 4, 0.7);
-    border-radius: 2px;
-    transition: width 0.4s ease;
+  .open-btn:hover {
+    background: rgba(202, 138, 4, 0.22);
+    border-color: rgba(202, 138, 4, 0.65);
+  }
+
+  .result-path {
+    font-size: 0.72rem;
+    color: #48484a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .result-text {
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #c7c7cc;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
   }
 </style>
