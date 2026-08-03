@@ -4,6 +4,20 @@ A local, privacy-first document search app. Point it at a folder and search acro
 
 ---
 
+## Platform support
+
+Spotfile is **cross-platform** — a single Go + Wails codebase builds a native app for each OS, and the embedding engine selects the right hardware accelerator automatically at startup:
+
+| OS | Webview | ONNX Runtime acceleration |
+|----|---------|---------------------------|
+| **macOS** (Apple Silicon & Intel) | WKWebView | CoreML → Metal GPU / Neural Engine |
+| **Windows 10 / 11** (x64) | WebView2 | DirectML → GPU + NPU (incl. Copilot+ PCs) |
+| **Linux** | WebKitGTK | CPU (all cores) |
+
+Each OS needs its matching ONNX Runtime library — and, to build from source, a C toolchain — as described below. Because the ONNX Runtime binding uses **CGO, release binaries are built on the target OS**; cross-compiling from one OS to another is not supported.
+
+---
+
 ## Prerequisites
 
 ### 1. ONNX Runtime
@@ -26,14 +40,17 @@ sudo pacman -S onnxruntime
 
 **Windows**
 
-Download the ONNX Runtime shared library from the [official releases](https://github.com/microsoft/onnxruntime/releases) and place `onnxruntime.dll` in the same directory as the Spotfile executable, or add it to your `PATH`.
+Spotfile uses the **DirectML** execution provider on Windows, so download the *DirectML* build of ONNX Runtime — the `onnxruntime-win-x64-directml-*.zip` asset from the [official releases](https://github.com/microsoft/onnxruntime/releases). Place **both** `onnxruntime.dll` and `DirectML.dll` next to the Spotfile executable, or anywhere on your `PATH`.
+
+> The plain CPU-only `onnxruntime.dll` will load but fail at startup, because the app requests the DirectML provider. Use the DirectML build.
 
 ---
 
 ### 2. Embedding model
 
-Spotfile uses [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (ONNX export). Download the two required files and place them in `~/.spotfile/`:
+Spotfile uses [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (ONNX export). Download the two required files into Spotfile's data folder — `~/.spotfile/` on macOS/Linux, `%USERPROFILE%\.spotfile\` on Windows (the app resolves this from your home directory on every platform).
 
+**macOS / Linux**
 ```bash
 mkdir -p ~/.spotfile
 
@@ -44,6 +61,17 @@ curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.o
 # vocabulary
 curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.txt" \
      -o ~/.spotfile/vocab.txt
+```
+
+**Windows (PowerShell)**
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.spotfile" | Out-Null
+
+# model weights (~127 MB)
+curl.exe -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx" -o "$env:USERPROFILE\.spotfile\model.onnx"
+
+# vocabulary
+curl.exe -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.txt" -o "$env:USERPROFILE\.spotfile\vocab.txt"
 ```
 
 > If you have `git-lfs` installed you can also clone the repo:
@@ -62,6 +90,13 @@ curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.txt" \
 | Go | 1.24+ | [go.dev/dl](https://go.dev/dl) |
 | Node | 18+ | [nodejs.org](https://nodejs.org) |
 | Wails CLI | v2 | `go install github.com/wailsapp/wails/v2/cmd/wails@latest` |
+| C compiler (CGO) | any | see below |
+
+The ONNX Runtime binding uses **CGO**, so a C toolchain is required to build:
+
+- **macOS** — Xcode Command Line Tools: `xcode-select --install`
+- **Windows** — a GCC toolchain such as [mingw-w64](https://www.mingw-w64.org/) (e.g. via [MSYS2](https://www.msys2.org/)), on your `PATH`
+- **Linux** — `build-essential` (Debian/Ubuntu) or `base-devel` (Arch)
 
 ---
 
@@ -87,7 +122,7 @@ wails dev
 wails build
 ```
 
-The output app is written to `build/bin/`. On macOS you will get a `.app` bundle; on Windows an `.exe`.
+The output app is written to `build/bin/`. On macOS you get a `.app` bundle; on Windows a `.exe`. Build on the OS you are targeting — CGO does not cross-compile here.
 
 ### macOS — Gatekeeper
 
@@ -98,6 +133,10 @@ xattr -dr com.apple.quarantine /Applications/Spotfile.app
 ```
 
 Or right-click → **Open** → **Open** on first launch.
+
+### Windows — SmartScreen & DLLs
+
+Unsigned `.exe` files trigger a SmartScreen warning on first run: click **More info → Run anyway**. Keep `onnxruntime.dll` and `DirectML.dll` (from Prerequisites §1) in the same folder as `Spotfile.exe`, or on your `PATH`.
 
 ---
 
@@ -118,7 +157,8 @@ Spotfile watches the indexed folder for changes and re-indexes modified files au
 | Error | Fix |
 |-------|-----|
 | `ONNX Runtime not found — run: brew install onnxruntime` | Install the library (see Prerequisites §1) |
-| `no such file: model.onnx` | Download the model files (see Prerequisites §2) |
+| ONNX Runtime / DirectML fails to load on Windows | Use the **DirectML** build of ONNX Runtime and keep `onnxruntime.dll` + `DirectML.dll` next to `Spotfile.exe` (Prerequisites §1) — the CPU-only build lacks DirectML |
+| `no such file: model.onnx` | Download the model files into `~/.spotfile` / `%USERPROFILE%\.spotfile` (see Prerequisites §2) |
 | `no supported files found` | The chosen folder contains no `.txt`, `.md`, or `.pdf` files |
 
 ---
