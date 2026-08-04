@@ -213,8 +213,7 @@ func (a *App) indexFolder(dir string) error {
 		if info.IsDir() {
 			return nil
 		}
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".txt", ".md", ".pdf":
+		if isIndexable(path) {
 			paths = append(paths, path)
 		}
 		return nil
@@ -223,7 +222,7 @@ func (a *App) indexFolder(dir string) error {
 		return fmt.Errorf("walk directory: %w", err)
 	}
 	if len(paths) == 0 {
-		return fmt.Errorf("no supported files (.txt, .md, .pdf) found in %s", filepath.Base(dir))
+		return fmt.Errorf("no supported text or PDF files found in %s", filepath.Base(dir))
 	}
 	log.Printf("index: starting folder=%q files=%d", dir, len(paths))
 
@@ -417,6 +416,30 @@ func (a *App) ReadFileAsBase64(path string) (string, error) {
 		return "", fmt.Errorf("read file: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// indexableExtensions are the file types Spotfile indexes. PDFs are parsed
+// page-by-page by the engine; every other type is read as UTF-8 text.
+var indexableExtensions = map[string]bool{
+	".pdf": true,
+	// documents / notes
+	".txt": true, ".md": true, ".markdown": true, ".rst": true, ".org": true,
+	// data / config
+	".csv": true, ".tsv": true, ".json": true, ".jsonc": true, ".yaml": true,
+	".yml": true, ".toml": true, ".ini": true, ".cfg": true, ".conf": true,
+	".env": true, ".log": true, ".xml": true,
+	// web
+	".html": true, ".htm": true, ".css": true, ".scss": true, ".svelte": true, ".vue": true,
+	// code
+	".js": true, ".jsx": true, ".ts": true, ".tsx": true, ".go": true, ".py": true,
+	".rb": true, ".rs": true, ".java": true, ".kt": true, ".c": true, ".h": true,
+	".cpp": true, ".hpp": true, ".cc": true, ".cs": true, ".php": true, ".swift": true,
+	".sh": true, ".bash": true, ".zsh": true, ".sql": true,
+}
+
+// isIndexable reports whether a path's extension is one Spotfile indexes.
+func isIndexable(path string) bool {
+	return indexableExtensions[strings.ToLower(filepath.Ext(path))]
 }
 
 func spotfileDir() string {

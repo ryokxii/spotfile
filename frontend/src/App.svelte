@@ -6,6 +6,8 @@
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import PDFViewer from './PDFViewer.svelte'
   import StatusBar from './StatusBar.svelte'
+import MarkdownViewer from './MarkdownViewer.svelte'
+import TXTViewer from './TXTViewer.svelte'
 
   interface SearchResult {
     docPath: string
@@ -41,11 +43,20 @@
   let watcherActive = false
   let reindexing = false
 
-  // PDF viewer
+  // PDF, Markdown & TXT viewer
   let pdfViewerPath = ''
   let pdfViewerPage = 1
   let pdfViewerHighlight = ''
   let showPDFViewer = false
+  let mdViewerPath = ''
+  let mdViewerHighlight = ''
+  let showMDViewer = false
+  let txtViewerPath = ''
+  let txtViewerHighlight = ''
+  let showTXTViewer = false
+
+  // Any docked preview pane is open — drives the split layout for all file types.
+  $: showPreview = showPDFViewer || showMDViewer || showTXTViewer
 
   const topK = 5
 
@@ -126,16 +137,36 @@
   }
 
   function openResult(result: SearchResult) {
-    if (!result.docPath.toLowerCase().endsWith('.pdf')) return
-    pdfViewerPath = result.docPath
-    pdfViewerPage = result.pageNum > 0 ? result.pageNum : 1
-    pdfViewerHighlight = result.text
-    showPDFViewer = true
-    activeKey = keyOf(result)
+    const lower = result.docPath.toLowerCase();
+    if (lower.endsWith('.pdf')) {
+      pdfViewerPath = result.docPath;
+      pdfViewerPage = result.pageNum > 0 ? result.pageNum : 1;
+      pdfViewerHighlight = result.text;
+      showPDFViewer = true;
+      showMDViewer = false;
+      showTXTViewer = false;
+      activeKey = keyOf(result);
+    } else if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
+      mdViewerPath = result.docPath;
+      mdViewerHighlight = result.text;
+      showMDViewer = true;
+      showPDFViewer = false;
+      showTXTViewer = false;
+      activeKey = keyOf(result);
+    } else if (lower.endsWith('.txt')) {
+      txtViewerPath = result.docPath;
+      txtViewerHighlight = result.text;
+      showTXTViewer = true;
+      showPDFViewer = false;
+      showMDViewer = false;
+      activeKey = keyOf(result);
+    }
   }
 
   function closePreview() {
     showPDFViewer = false
+    showMDViewer = false
+    showTXTViewer = false
     activeKey = ''
   }
 
@@ -155,8 +186,8 @@
 </script>
 
 <!-- ── Root ───────────────────────────────────────────────────── -->
-<svelte:window on:keydown={(e) => e.key === 'Escape' && showPDFViewer && closePreview()} />
-<div class="root" class:split={showPDFViewer}>
+<svelte:window on:keydown={(e) => e.key === 'Escape' && showPreview && closePreview()} />
+<div class="root" class:split={showPreview}>
   <div class="workspace">
     <div class="column" class:in-results={phase === 'results'}>
 
@@ -249,6 +280,22 @@
                     >
                       Open ▸
                     </button>
+                  {:else if r.docPath.toLowerCase().endsWith('.md') || r.docPath.toLowerCase().endsWith('.markdown')}
+                    <button
+                      class="open-btn"
+                      on:click={() => openResult(r)}
+                      title="Preview Markdown file"
+                    >
+                      Open ▸
+                    </button>
+                  {:else if r.docPath.toLowerCase().endsWith('.txt')}
+                    <button
+                      class="open-btn"
+                      on:click={() => openResult(r)}
+                      title="Preview text file"
+                    >
+                      Open ▸
+                    </button>
                   {/if}
                 </div>
                 <p class="result-path">{dirpath(r.docPath)}</p>
@@ -270,6 +317,24 @@
           docPath={pdfViewerPath}
           initialPage={pdfViewerPage}
           highlightText={pdfViewerHighlight}
+          onClose={closePreview}
+        />
+      </div>
+    {/if}
+    {#if showMDViewer}
+      <div class="pdf-pane">
+        <MarkdownViewer
+          docPath={mdViewerPath}
+          highlightText={mdViewerHighlight}
+          onClose={closePreview}
+        />
+      </div>
+    {/if}
+    {#if showTXTViewer}
+      <div class="pdf-pane">
+        <TXTViewer
+          docPath={txtViewerPath}
+          highlightText={txtViewerHighlight}
           onClose={closePreview}
         />
       </div>
