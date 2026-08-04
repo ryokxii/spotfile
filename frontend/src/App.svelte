@@ -4,10 +4,11 @@
   import { cubicOut } from 'svelte/easing'
   import { Search, SelectFolder, IndexFolder } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
-  import PDFViewer from './PDFViewer.svelte'
   import StatusBar from './StatusBar.svelte'
-import MarkdownViewer from './MarkdownViewer.svelte'
-import TXTViewer from './TXTViewer.svelte'
+  import PdfViewer from './viewers/PdfViewer.svelte'
+  import TextViewer from './viewers/TextViewer.svelte'
+  import { previewTargetFor, type PreviewTarget } from './lib/fileTypes'
+  import { filename, dirpath } from './lib/path'
 
   interface SearchResult {
     docPath: string
@@ -30,7 +31,6 @@ import TXTViewer from './TXTViewer.svelte'
   let query = ''
   let results: SearchResult[] = []
   let searchError = ''
-  let activeKey = '' // which result is currently open in the side preview
 
   // Indexing (forwarded to StatusBar)
   let indexing = false
@@ -43,20 +43,9 @@ import TXTViewer from './TXTViewer.svelte'
   let watcherActive = false
   let reindexing = false
 
-  // PDF, Markdown & TXT viewer
-  let pdfViewerPath = ''
-  let pdfViewerPage = 1
-  let pdfViewerHighlight = ''
-  let showPDFViewer = false
-  let mdViewerPath = ''
-  let mdViewerHighlight = ''
-  let showMDViewer = false
-  let txtViewerPath = ''
-  let txtViewerHighlight = ''
-  let showTXTViewer = false
-
-  // Any docked preview pane is open — drives the split layout for all file types.
-  $: showPreview = showPDFViewer || showMDViewer || showTXTViewer
+  // Docked preview pane — null when closed. `activeKey` marks the open result.
+  let preview: (PreviewTarget & { activeKey: string }) | null = null
+  $: showPreview = preview !== null
 
   const topK = 5
 
@@ -119,7 +108,7 @@ import TXTViewer from './TXTViewer.svelte'
     phase = 'loading'
     results = []
     searchError = ''
-    activeKey = ''
+    preview = null
 
     try {
       results = (await Search(q, topK)) ?? []
@@ -137,51 +126,15 @@ import TXTViewer from './TXTViewer.svelte'
   }
 
   function openResult(result: SearchResult) {
-    const lower = result.docPath.toLowerCase();
-    if (lower.endsWith('.pdf')) {
-      pdfViewerPath = result.docPath;
-      pdfViewerPage = result.pageNum > 0 ? result.pageNum : 1;
-      pdfViewerHighlight = result.text;
-      showPDFViewer = true;
-      showMDViewer = false;
-      showTXTViewer = false;
-      activeKey = keyOf(result);
-    } else if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
-      mdViewerPath = result.docPath;
-      mdViewerHighlight = result.text;
-      showMDViewer = true;
-      showPDFViewer = false;
-      showTXTViewer = false;
-      activeKey = keyOf(result);
-    } else if (lower.endsWith('.txt')) {
-      txtViewerPath = result.docPath;
-      txtViewerHighlight = result.text;
-      showTXTViewer = true;
-      showPDFViewer = false;
-      showMDViewer = false;
-      activeKey = keyOf(result);
-    }
+    preview = { ...previewTargetFor(result), activeKey: keyOf(result) }
   }
 
   function closePreview() {
-    showPDFViewer = false
-    showMDViewer = false
-    showTXTViewer = false
-    activeKey = ''
+    preview = null
   }
 
   function excerpt(text: string) {
     return text.replace(/\s+/g, ' ').trim()
-  }
-
-  function filename(path: string) {
-    return path.split(/[/\\]/).pop() ?? path
-  }
-
-  function dirpath(path: string) {
-    const parts = path.split(/[/\\]/)
-    parts.pop()
-    return parts.join('/') || path
   }
 </script>
 
@@ -262,7 +215,7 @@ import TXTViewer from './TXTViewer.svelte'
               {@const isPDF = r.docPath.toLowerCase().endsWith('.pdf')}
               <article
                 class="result"
-                class:active={keyOf(r) === activeKey}
+                class:active={keyOf(r) === preview?.activeKey}
                 in:fly={{ y: 12, duration: 300, delay: i * 70, easing: cubicOut }}
               >
                 <div class="result-head">
@@ -273,30 +226,10 @@ import TXTViewer from './TXTViewer.svelte'
                   <span class="file-name" title={r.docPath}>{filename(r.docPath)}</span>
                   {#if isPDF}
                     <span class="page-badge">p.{r.pageNum || 1}</span>
-                    <button
-                      class="open-btn"
-                      on:click={() => openResult(r)}
-                      title="Preview at page {r.pageNum || 1}"
-                    >
-                      Open ▸
-                    </button>
-                  {:else if r.docPath.toLowerCase().endsWith('.md') || r.docPath.toLowerCase().endsWith('.markdown')}
-                    <button
-                      class="open-btn"
-                      on:click={() => openResult(r)}
-                      title="Preview Markdown file"
-                    >
-                      Open ▸
-                    </button>
-                  {:else if r.docPath.toLowerCase().endsWith('.txt')}
-                    <button
-                      class="open-btn"
-                      on:click={() => openResult(r)}
-                      title="Preview text file"
-                    >
-                      Open ▸
-                    </button>
                   {/if}
+                  <button class="open-btn" on:click={() => openResult(r)} title="Open preview">
+                    Open ▸
+                  </button>
                 </div>
                 <p class="result-path">{dirpath(r.docPath)}</p>
                 <p class="result-text">{excerpt(r.text)}</p>
@@ -311,32 +244,23 @@ import TXTViewer from './TXTViewer.svelte'
 
     </div>
 
-    {#if showPDFViewer}
+    {#if preview}
       <div class="pdf-pane">
-        <PDFViewer
-          docPath={pdfViewerPath}
-          initialPage={pdfViewerPage}
-          highlightText={pdfViewerHighlight}
-          onClose={closePreview}
-        />
-      </div>
-    {/if}
-    {#if showMDViewer}
-      <div class="pdf-pane">
-        <MarkdownViewer
-          docPath={mdViewerPath}
-          highlightText={mdViewerHighlight}
-          onClose={closePreview}
-        />
-      </div>
-    {/if}
-    {#if showTXTViewer}
-      <div class="pdf-pane">
-        <TXTViewer
-          docPath={txtViewerPath}
-          highlightText={txtViewerHighlight}
-          onClose={closePreview}
-        />
+        {#if preview.kind === 'pdf'}
+          <PdfViewer
+            docPath={preview.path}
+            initialPage={preview.page}
+            highlightText={preview.highlight}
+            onClose={closePreview}
+          />
+        {:else}
+          <TextViewer
+            docPath={preview.path}
+            mode={preview.kind}
+            highlightText={preview.highlight}
+            onClose={closePreview}
+          />
+        {/if}
       </div>
     {/if}
   </div>
