@@ -2,17 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"sync"
 	"time"
 
 	"spotfile/engine/embedder"
 	"spotfile/engine/indexing"
+	"spotfile/engine/llamaserver"
 	"spotfile/engine/llm"
 	"spotfile/engine/vectorstore"
 
@@ -68,21 +68,24 @@ func (a *App) shutdown(_ context.Context) {
 	if a.embedder != nil {
 		a.embedder.Close()
 	}
-	// Tear down the process-global ORT environment once, after the engine
-	// (and its session) is closed.
-	embedder.ShutdownRuntime()
+}
+
+// context returns the Wails app context, or Background before startup.
+func (a *App) context() context.Context {
+	if a.ctx == nil {
+		return context.Background()
+	}
+	return a.ctx
 }
 
 // EngineConfig is the payload for initialising the engine.
 // All fields are optional — empty strings fall back to platform defaults.
 type EngineConfig struct {
-	LibraryPath string `json:"libraryPath"`
-	ModelPath   string `json:"modelPath"`
-	VocabPath   string `json:"vocabPath"`
-	Workers     int    `json:"workers"`
+	ModelPath  string `json:"modelPath"`  // embedding model GGUF
+	ServerPath string `json:"serverPath"` // llama-server executable
 }
 
-// InitEngine initialises (or re-initialises) the ONNX engine.
+// InitEngine initialises (or re-initialises) the embedding engine.
 func (a *App) InitEngine(cfg EngineConfig) error {
 	a.engMu.Lock()
 	defer a.engMu.Unlock()
@@ -100,46 +103,30 @@ func (a *App) initEngineLocked(cfg EngineConfig) error {
 		a.embedder = nil
 	}
 
-	if cfg.LibraryPath == "" {
-		cfg.LibraryPath = defaultLibraryPath()
-	}
 	if cfg.ModelPath == "" {
-		cfg.ModelPath = filepath.Join(spotfileDir(), "model.onnx")
+		cfg.ModelPath = filepath.Join(modelsDir(), embedder.ModelFile)
 	}
-	if cfg.VocabPath == "" {
-		cfg.VocabPath = filepath.Join(spotfileDir(), "vocab.txt")
+	if err := os.MkdirAll(modelsDir(), 0755); err != nil {
+		return fmt.Errorf("create models dir: %w", err)
 	}
-
-	if err := os.MkdirAll(spotfileDir(), 0755); err != nil {
-		return fmt.Errorf("create spotfile dir: %w", err)
-	}
-
-	// A missing model/vocab data file is a different problem from a missing ONNX
-	// runtime library — check assets up front so we give an accurate, actionable
-	// error instead of conflating it with a dlopen failure.
-	for _, asset := range []struct{ path, name string }{
-		{cfg.ModelPath, "model.onnx"},
-		{cfg.VocabPath, "vocab.txt"},
-	} {
-		if _, statErr := os.Stat(asset.path); os.IsNotExist(statErr) {
-			return fmt.Errorf("missing %s — download the bge-small-en-v1.5 model files into %s (see README)", asset.name, spotfileDir())
-		}
+	if _, err := os.Stat(cfg.ModelPath); os.IsNotExist(err) {
+		return fmt.Errorf("missing %s — download it into %s (see README)", filepath.Base(cfg.ModelPath), modelsDir())
 	}
 
-	var err error
-	a.embedder, err = embedder.New(embedder.Config{
-		LibraryPath: cfg.LibraryPath,
-		ModelPath:   cfg.ModelPath,
-		VocabPath:   cfg.VocabPath,
-		Workers:     cfg.Workers,
-	})
+	model, err := embedder.New(embedder.Config{ModelPath: cfg.ModelPath, ServerPath: cfg.ServerPath})
 	if err != nil {
-		// Only a genuine shared-library load failure means the runtime is absent.
-		if strings.Contains(err.Error(), "dlopen") {
-			return fmt.Errorf("ONNX Runtime not found — run: brew install onnxruntime")
-		}
 		return err
 	}
+	// Start llama-server now so a missing binary or a bad model is reported at
+	// launch rather than on the first search.
+	if err := model.Start(a.context()); err != nil {
+		model.Close()
+		if errors.Is(err, llamaserver.ErrNotFound) {
+			return fmt.Errorf("llama.cpp not found — install it (macOS: brew install llama.cpp) or place llama-server next to Spotfile")
+		}
+		return fmt.Errorf("start embedding server: %w", err)
+	}
+	a.embedder = model
 
 	llmModelPath := filepath.Join(spotfileDir(), "model.gguf")
 	a.llm, _ = llm.New(llm.Config{
@@ -151,16 +138,28 @@ func (a *App) initEngineLocked(cfg EngineConfig) error {
 	// load when the in-memory store is empty so a re-init can't clobber chunks
 	// indexed since startup.
 	a.store.SetPersistPath(storePath())
+	a.store.SetEmbedder(embedder.ID)
+	var stalePaths []string
 	if a.store.Len() == 0 {
-		if err := a.store.Load(storePath()); err != nil {
+		var stale *vectorstore.StaleError
+		switch err := a.store.Load(storePath()); {
+		case errors.As(err, &stale):
+			log.Printf("store: %v", err)
+			stalePaths = stale.Paths
+		case err != nil:
 			log.Printf("store: load failed (starting empty): %v", err)
-		} else if n := a.store.Len(); n > 0 {
-			log.Printf("store: loaded %d chunks from %s", n, storePath())
+		default:
+			if n := a.store.Len(); n > 0 {
+				log.Printf("store: loaded %d chunks from %s", n, storePath())
+			}
 		}
 	}
 
 	// Background indexer drains prioritized work on a single worker.
-	a.indexer = indexing.NewIndexer(a.ctx, a.embedder, a.store)
+	a.indexer = indexing.NewIndexer(a.context(), a.embedder, a.store)
+	if len(stalePaths) > 0 {
+		go a.rebuildStaleIndex(stalePaths)
+	}
 
 	return nil
 }
@@ -178,26 +177,12 @@ func spotfileDir() string {
 	return filepath.Join(home, ".spotfile")
 }
 
+// modelsDir holds downloaded model files.
+func modelsDir() string {
+	return filepath.Join(spotfileDir(), "models")
+}
+
 // storePath is where the persistent vector store lives on disk.
 func storePath() string {
 	return filepath.Join(spotfileDir(), "store.gob")
-}
-
-func defaultLibraryPath() string {
-	switch runtime.GOOS {
-	case "darwin":
-		for _, p := range []string{
-			"/opt/homebrew/lib/libonnxruntime.dylib",
-			"/usr/local/lib/libonnxruntime.dylib",
-		} {
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
-		}
-		return "libonnxruntime.dylib"
-	case "windows":
-		return "onnxruntime.dll"
-	default:
-		return "libonnxruntime.so"
-	}
 }

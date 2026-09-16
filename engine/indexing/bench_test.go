@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"spotfile/engine/embedder"
 	"spotfile/engine/embedder/embeddertest"
 )
 
@@ -18,16 +17,7 @@ func BenchmarkEmbedFiles(b *testing.B) {
 		b.Skip("Skipping benchmark in short mode")
 	}
 
-	m, err := embedder.New(embedder.Config{
-		LibraryPath: "",
-		ModelPath:   "",
-		VocabPath:   embeddertest.WriteVocab(b),
-		Workers:     4,
-	})
-	if err != nil {
-		b.Skipf("ONNX Runtime not available: %v", err)
-	}
-	defer m.Close()
+	m := embeddertest.RealModel(b)
 
 	// Create test files
 	testFiles := createTestFiles(b.TempDir(), 100, 2000) // 100 files, 2KB each

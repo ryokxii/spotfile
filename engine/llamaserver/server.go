@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
@@ -38,7 +39,7 @@ type Config struct {
 	// Binary is the llama-server executable. Empty means Locate().
 	Binary string
 	// Args are model and role flags (for example -m, --embeddings). Host, port
-	// and API key are always chosen by the Server and must not be included.
+	// and API key file are always chosen by the Server and must not be included.
 	Args []string
 	// IdleTimeout stops the process after this long with no active leases.
 	// Zero keeps it running until Close.
@@ -186,10 +187,17 @@ func (s *Server) launch() *process {
 	p.baseURL = "http://127.0.0.1:" + strconv.Itoa(port)
 	p.apiKey = key
 
+	// Pass the key in a private file: command-line arguments are visible to
+	// every process on the machine (ps).
+	keyDir, keyFile, err := writeKeyFile(key)
+	if err != nil {
+		return fail(fmt.Errorf("write api key file: %w", err))
+	}
 	args := append(slices.Clone(s.cfg.Args),
-		"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--api-key", key)
+		"--host", "127.0.0.1", "--port", strconv.Itoa(port), "--api-key-file", keyFile)
 	cmd, pl, err := startCommand(bin, args, p.logs)
 	if err != nil {
+		_ = os.RemoveAll(keyDir)
 		return fail(fmt.Errorf("start llama-server: %w", err))
 	}
 	p.cmd, p.pl = cmd, pl
@@ -197,6 +205,7 @@ func (s *Server) launch() *process {
 	go func() {
 		_ = cmd.Wait()
 		pl.release()
+		_ = os.RemoveAll(keyDir)
 		close(p.done)
 		s.forget(p)
 	}()
@@ -319,6 +328,21 @@ func freePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// writeKeyFile stores key in a new directory readable only by this user and
+// returns the directory (for removal) and file path.
+func writeKeyFile(key string) (dir, file string, err error) {
+	dir, err = os.MkdirTemp("", "spotfile-llama-")
+	if err != nil {
+		return "", "", err
+	}
+	file = filepath.Join(dir, "api-key")
+	if err := os.WriteFile(file, []byte(key+"\n"), 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", "", err
+	}
+	return dir, file, nil
 }
 
 func newAPIKey() (string, error) {

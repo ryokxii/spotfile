@@ -6,80 +6,53 @@ A local, privacy-first document search app. Point it at a folder and search acro
 
 ## Platform support
 
-Spotfile is **cross-platform** — a single Go + Wails codebase builds a native app for each OS, and the embedding engine selects the right hardware accelerator automatically at startup:
+Spotfile is **cross-platform** — a single Go + Wails codebase builds a native app for each OS. Embeddings are computed by [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`, which Spotfile runs as a background child process on `127.0.0.1` and stops when the app quits (or crashes).
 
-| OS | Webview | ONNX Runtime acceleration |
-|----|---------|---------------------------|
-| **macOS** (Apple Silicon & Intel) | WKWebView | CPU (all cores) — CoreML EP disabled, see `engine/embedder/provider_darwin.go` |
-| **Windows 10 / 11** (x64) | WebView2 | DirectML → GPU + NPU (incl. Copilot+ PCs) |
-| **Linux** | WebKitGTK | CPU (all cores) |
-
-Each OS needs its matching ONNX Runtime library — and, to build from source, a C toolchain — as described below. Because the ONNX Runtime binding uses **CGO, release binaries are built on the target OS**; cross-compiling from one OS to another is not supported.
+| OS | Webview | Embedding acceleration (llama.cpp) |
+|----|---------|------------------------------------|
+| **macOS** (Apple Silicon) | WKWebView | Metal GPU |
+| **Windows 10 / 11** (x64) | WebView2 | Vulkan GPU build, or CPU build |
+| **Linux** | WebKitGTK | Vulkan/CUDA builds, or CPU |
 
 ---
 
 ## Prerequisites
 
-### 1. ONNX Runtime
+### 1. llama.cpp
 
-Spotfile uses ONNX Runtime to run the embedding model. Install it before launching the app.
+Spotfile looks for `llama-server` in this order: the `SPOTFILE_LLAMA_SERVER` environment variable, next to the Spotfile executable, then your `PATH`.
 
-**macOS (Homebrew)**
+**macOS / Linux (Homebrew)**
 ```bash
-brew install onnxruntime
-```
-
-**Linux**
-```bash
-# Debian/Ubuntu
-sudo apt install libonnxruntime-dev
-
-# Arch
-sudo pacman -S onnxruntime
+brew install llama.cpp
 ```
 
 **Windows**
 
-Spotfile uses the **DirectML** execution provider on Windows, so download the *DirectML* build of ONNX Runtime — the `onnxruntime-win-x64-directml-*.zip` asset from the [official releases](https://github.com/microsoft/onnxruntime/releases). Place **both** `onnxruntime.dll` and `DirectML.dll` next to the Spotfile executable, or anywhere on your `PATH`.
-
-> The plain CPU-only `onnxruntime.dll` will load but fail at startup, because the app requests the DirectML provider. Use the DirectML build.
+Download a Windows build from the [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) — the `win-vulkan-x64` zip for GPU acceleration on NVIDIA/AMD/Intel, or `win-cpu-x64` otherwise. Place `llama-server.exe` **and the DLLs from the zip** next to `Spotfile.exe`, or set `SPOTFILE_LLAMA_SERVER` to the full path of `llama-server.exe`.
 
 ---
 
 ### 2. Embedding model
 
-Spotfile uses [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (ONNX export). Download the two required files into Spotfile's data folder — `~/.spotfile/` on macOS/Linux, `%USERPROFILE%\.spotfile\` on Windows (the app resolves this from your home directory on every platform).
+Spotfile uses [bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) as a 16-bit GGUF file (64 MB). Download it into Spotfile's models folder — `~/.spotfile/models/` on macOS/Linux, `%USERPROFILE%\.spotfile\models\` on Windows.
 
 **macOS / Linux**
 ```bash
-mkdir -p ~/.spotfile
-
-# model weights (~127 MB)
-curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx" \
-     -o ~/.spotfile/model.onnx
-
-# vocabulary
-curl -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.txt" \
-     -o ~/.spotfile/vocab.txt
+mkdir -p ~/.spotfile/models
+curl -L "https://huggingface.co/unsloth/bge-small-en-v1.5-GGUF/resolve/main/bge-small-en-v1.5-f16.gguf" \
+     -o ~/.spotfile/models/bge-small-en-v1.5-f16.gguf
 ```
 
 **Windows (PowerShell)**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.spotfile" | Out-Null
-
-# model weights (~127 MB)
-curl.exe -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx" -o "$env:USERPROFILE\.spotfile\model.onnx"
-
-# vocabulary
-curl.exe -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.txt" -o "$env:USERPROFILE\.spotfile\vocab.txt"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.spotfile\models" | Out-Null
+curl.exe -L "https://huggingface.co/unsloth/bge-small-en-v1.5-GGUF/resolve/main/bge-small-en-v1.5-f16.gguf" -o "$env:USERPROFILE\.spotfile\models\bge-small-en-v1.5-f16.gguf"
 ```
 
-> If you have `git-lfs` installed you can also clone the repo:
-> ```bash
-> git clone https://huggingface.co/BAAI/bge-small-en-v1.5 /tmp/bge
-> cp /tmp/bge/onnx/model.onnx ~/.spotfile/model.onnx
-> cp /tmp/bge/vocab.txt ~/.spotfile/vocab.txt
-> ```
+SHA-256: `c5d2302edc429f679642433b9f96dd217799727a06e675abef3b40a79f5e1589`
+
+> **Upgrading from the ONNX Runtime version:** the first launch detects the old index and rebuilds it automatically (progress shows in the status bar). The old `~/.spotfile/model.onnx` and `vocab.txt` are no longer used and can be deleted, and ONNX Runtime can be uninstalled.
 
 ---
 
@@ -90,13 +63,12 @@ curl.exe -L "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/vocab.tx
 | Go | 1.24+ | [go.dev/dl](https://go.dev/dl) |
 | Node | 18+ | [nodejs.org](https://nodejs.org) |
 | Wails CLI | v2 | `go install github.com/wailsapp/wails/v2/cmd/wails@latest` |
-| C compiler (CGO) | any | see below |
 
-The ONNX Runtime binding uses **CGO**, so a C toolchain is required to build:
+Wails needs the platform webview toolchain:
 
 - **macOS** — Xcode Command Line Tools: `xcode-select --install`
-- **Windows** — a GCC toolchain such as [mingw-w64](https://www.mingw-w64.org/) (e.g. via [MSYS2](https://www.msys2.org/)), on your `PATH`
-- **Linux** — `build-essential` (Debian/Ubuntu) or `base-devel` (Arch)
+- **Windows** — nothing extra (WebView2 ships with Windows 10/11)
+- **Linux** — `build-essential` and `libwebkit2gtk-4.0-dev` (Debian/Ubuntu), or the equivalents for your distro
 
 ---
 
@@ -122,7 +94,7 @@ wails dev
 wails build
 ```
 
-The output app is written to `build/bin/`. On macOS you get a `.app` bundle; on Windows a `.exe`. Build on the OS you are targeting — CGO does not cross-compile here.
+The output app is written to `build/bin/`. On macOS you get a `.app` bundle; on Windows a `.exe`. Build on the OS you are targeting.
 
 ### macOS — Gatekeeper
 
@@ -136,7 +108,7 @@ Or right-click → **Open** → **Open** on first launch.
 
 ### Windows — SmartScreen & DLLs
 
-Unsigned `.exe` files trigger a SmartScreen warning on first run: click **More info → Run anyway**. Keep `onnxruntime.dll` and `DirectML.dll` (from Prerequisites §1) in the same folder as `Spotfile.exe`, or on your `PATH`.
+Unsigned `.exe` files trigger a SmartScreen warning on first run: click **More info → Run anyway**. Keep `llama-server.exe` and its DLLs (from Prerequisites §1) in the same folder as `Spotfile.exe`.
 
 ---
 
@@ -156,10 +128,10 @@ Spotfile watches the indexed folder for changes and re-indexes modified files au
 
 | Error | Fix |
 |-------|-----|
-| `ONNX Runtime not found — run: brew install onnxruntime` | Install the library (see Prerequisites §1) |
-| ONNX Runtime / DirectML fails to load on Windows | Use the **DirectML** build of ONNX Runtime and keep `onnxruntime.dll` + `DirectML.dll` next to `Spotfile.exe` (Prerequisites §1) — the CPU-only build lacks DirectML |
-| `no such file: model.onnx` | Download the model files into `~/.spotfile` / `%USERPROFILE%\.spotfile` (see Prerequisites §2) |
-| `no supported files found` | The chosen folder contains no `.txt`, `.md`, or `.pdf` files |
+| `llama.cpp not found — install it …` | Install llama.cpp or place `llama-server` next to Spotfile (Prerequisites §1) |
+| `missing bge-small-en-v1.5-f16.gguf` | Download the model into `~/.spotfile/models` / `%USERPROFILE%\.spotfile\models` (Prerequisites §2) |
+| `start embedding server: llama-server exited during startup …` | The message includes llama-server's own log. Usually a corrupted model download (check the SHA-256) or a llama.cpp build too old for the model — update llama.cpp |
+| `no supported files found` | The chosen folder contains no supported text or PDF files |
 
 ---
 

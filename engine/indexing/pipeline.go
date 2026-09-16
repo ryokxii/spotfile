@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -13,19 +14,20 @@ import (
 )
 
 const (
-	maxChunkWords    = 400 // leaves headroom for [CLS]/[SEP] plus subword expansion
-	chunkOverlap     = 50
-	defaultBatchSize = 16 // embed 16 chunks per ONNX call
-	// maxConcurrentBatches caps simultaneous BatchEmbed calls during indexing.
-	// Each call holds batch×heads×seq²-sized attention buffers (~0.6 GB at full
-	// length); one call per CPU multiplied that peak by NumCPU (12.7 GB observed).
-	maxConcurrentBatches = 2
+	// maxChunkWords keeps most prose chunks under the model's token window;
+	// denser text (code, Markdown) is split further by token count.
+	maxChunkWords    = 250
+	chunkOverlap     = 40
+	defaultBatchSize = 16 // chunks per embedding request
+	// maxConcurrentBatches matches the embedding server's parallel slots;
+	// additional concurrent requests would only queue.
+	maxConcurrentBatches = embedder.ParallelRequests
 	maxDocBuffer         = 256 // limit document buffer to prevent memory bloat with 100K+ files
 )
 
-// CountChunks returns the exact number of chunks EmbedFiles will create for
-// paths. It is used to provide a meaningful indexing percentage before model
-// inference begins.
+// CountChunks estimates how many chunks EmbedFiles will create for paths, for
+// an indexing percentage before inference begins. It counts word windows only;
+// EmbedFiles may split a dense window further to fit the model's token limit.
 func CountChunks(ctx context.Context, paths []string) (int, error) {
 	count := 0
 	for _, path := range paths {
@@ -64,6 +66,8 @@ func CountChunks(ctx context.Context, paths []string) (int, error) {
 //
 // The returned channel is closed when all files have been processed.
 func EmbedFiles(ctx context.Context, model *embedder.Model, paths []string) <-chan vectorstore.EmbeddedChunk {
+	countTokens := func(text string) (int, error) { return model.CountTokens(ctx, text) }
+
 	out := make(chan vectorstore.EmbeddedChunk, 64)
 
 	go func() {
@@ -124,10 +128,9 @@ func EmbedFiles(ctx context.Context, model *embedder.Model, paths []string) <-ch
 			}
 		}
 
-		// Bounded reader pool — I/O parallelism capped at Workers, matching the
-		// Stage 3 embed-pool idiom below.
+		// Bounded reader pool — I/O parallelism capped at the CPU count.
 		var readWg sync.WaitGroup
-		for range model.Workers() {
+		for range runtime.NumCPU() {
 			readWg.Add(1)
 			go func() {
 				defer readWg.Done()
@@ -141,7 +144,8 @@ func EmbedFiles(ctx context.Context, model *embedder.Model, paths []string) <-ch
 			close(pages)
 		}()
 
-		// Stage 2: chunk pages → chunks channel (single goroutine preserves ordering)
+		// Stage 2: chunk pages → chunks channel (single goroutine preserves ordering).
+		// Word windows that exceed the model's token limit are split further.
 		type chunk struct {
 			docPath  string
 			chunkIdx int
@@ -152,11 +156,20 @@ func EmbedFiles(ctx context.Context, model *embedder.Model, paths []string) <-ch
 		go func() {
 			defer close(chunks)
 			for pg := range pages {
-				for i, c := range extract.Chunk(pg.text, maxChunkWords, chunkOverlap) {
-					select {
-					case chunks <- chunk{docPath: pg.path, chunkIdx: i, pageNum: pg.pageNum, text: c}:
-					case <-ctx.Done():
-						return
+				idx := 0
+				for _, window := range extract.Chunk(pg.text, maxChunkWords, chunkOverlap) {
+					pieces, err := fitToTokens(window, embedder.MaxTokens, countTokens)
+					if err != nil {
+						log.Printf("index: skip chunk in %s: %v", pg.path, err)
+						continue
+					}
+					for _, text := range pieces {
+						select {
+						case chunks <- chunk{docPath: pg.path, chunkIdx: idx, pageNum: pg.pageNum, text: text}:
+						case <-ctx.Done():
+							return
+						}
+						idx++
 					}
 				}
 			}
@@ -164,7 +177,7 @@ func EmbedFiles(ctx context.Context, model *embedder.Model, paths []string) <-ch
 
 		// Stage 3: embed chunks in batches, bounded to maxConcurrentBatches goroutines
 		var embedWg sync.WaitGroup
-		for range min(model.Workers(), maxConcurrentBatches) {
+		for range maxConcurrentBatches {
 			embedWg.Add(1)
 			go func() {
 				defer embedWg.Done()
@@ -177,7 +190,7 @@ func EmbedFiles(ctx context.Context, model *embedder.Model, paths []string) <-ch
 					for i, ch := range batch {
 						texts[i] = ch.text
 					}
-					vecs, err := model.BatchEmbed(texts)
+					vecs, err := model.BatchEmbed(ctx, texts)
 					if err != nil {
 						log.Printf("index: batch embed failed: %v", err)
 						batch = batch[:0]

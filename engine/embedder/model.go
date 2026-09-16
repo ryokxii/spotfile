@@ -1,235 +1,200 @@
-// Package embedder turns text into normalized embedding vectors by running the
-// bge-small-en-v1.5 model through ONNX Runtime.
+// Package embedder turns text into normalized embedding vectors by running
+// bge-small-en-v1.5 on a llama.cpp llama-server child process.
 package embedder
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
-	"runtime"
-	"sync"
+	"net/http"
+	"os"
+	"strconv"
+	"time"
 
-	ort "github.com/yalue/onnxruntime_go"
+	"spotfile/engine/llamaserver"
 )
 
-// MaxSeqLen is the model's maximum input length in tokens.
-const MaxSeqLen = 512
+const (
+	// ModelFile is the GGUF file expected in Spotfile's models directory.
+	ModelFile = "bge-small-en-v1.5-f16.gguf"
+	// ID identifies how stored vectors were produced. Changing the model,
+	// quantization or pooling must change ID so existing indexes are rebuilt.
+	ID = "bge-small-en-v1.5-f16/cls"
+	// Dimensions is the embedding vector length.
+	Dimensions = 384
+	// MaxTokens is the longest input the model accepts: its 512-token window
+	// minus the [CLS] and [SEP] tokens the server adds.
+	MaxTokens = 510
+	// ParallelRequests is how many requests the server processes at once.
+	// Callers gain nothing from sending more concurrently.
+	ParallelRequests = 2
 
-// inputNames matches the bge-small-en-v1.5 ONNX export order.
-var inputNames = []string{"input_ids", "attention_mask", "token_type_ids"}
-var outputNames = []string{"last_hidden_state"}
+	// queryInstruction is bge-small-en-v1.5's recommended prefix for short
+	// search queries matched against passages. Passages are embedded as-is.
+	queryInstruction = "Represent this sentence for searching relevant passages: "
 
+	startTimeout = time.Minute
+	errBodyLimit = 1 << 12
+)
+
+// Config configures the embedding model.
 type Config struct {
-	LibraryPath string
-	ModelPath   string
-	VocabPath   string
-	Workers     int // 0 → runtime.NumCPU()
+	// ModelPath is the bge-small-en-v1.5 GGUF file. Required.
+	ModelPath string
+	// ServerPath is the llama-server executable. Empty means llamaserver.Locate.
+	ServerPath string
 }
 
-// Model is a loaded embedding model with a worker pool for single-text requests.
+// Model embeds text through a llama-server running in embedding mode. It is
+// safe for concurrent use.
 type Model struct {
-	cfg       Config
-	tok       *BertTokenizer
-	session   *ort.DynamicAdvancedSession
-	jobs      chan embedJob
-	closeOnce sync.Once
-	closed    chan struct{}
-	wg        sync.WaitGroup
+	srv  *llamaserver.Server
+	http *http.Client
 }
 
-type embedJob struct {
-	text   string
-	result chan<- embedResult
-}
-
-type embedResult struct {
-	vec []float32
-	err error
-}
-
+// New validates the configuration. The server process starts on first use or
+// on Start.
 func New(cfg Config) (*Model, error) {
-	if cfg.Workers <= 0 {
-		cfg.Workers = runtime.NumCPU()
+	if _, err := os.Stat(cfg.ModelPath); err != nil {
+		return nil, fmt.Errorf("embedding model: %w", err)
 	}
+	perSlot := MaxTokens + 2
+	ctxSize := strconv.Itoa(perSlot * ParallelRequests)
+	srv := llamaserver.New(llamaserver.Config{
+		Binary: cfg.ServerPath,
+		Args: []string{
+			"-m", cfg.ModelPath,
+			"--embeddings", "--pooling", "cls",
+			"-ngl", "99", // all layers on the GPU when one is available
+			"-np", strconv.Itoa(ParallelRequests),
+			"-c", ctxSize, "-b", ctxSize,
+			// Encoder models need a whole input in one physical batch.
+			"-ub", ctxSize,
+			"--no-webui",
+		},
+		StartTimeout: startTimeout,
+	})
+	return &Model{srv: srv, http: &http.Client{}}, nil
+}
 
-	// The ORT environment is a process-global singleton. Initialize it once and
-	// reuse it across Model instances — re-initializing returns an error, and a
-	// previous partial init (env up, but a later New step failed) must not poison
-	// subsequent New calls. SetSharedLibraryPath is only honoured before the
-	// first init, so skip it once the env is already up.
-	if !ort.IsInitialized() {
-		ort.SetSharedLibraryPath(cfg.LibraryPath)
-		if err := ort.InitializeEnvironment(); err != nil {
-			return nil, fmt.Errorf("ort init: %w", err)
-		}
-	}
-
-	tok, err := LoadTokenizer(cfg.VocabPath, MaxSeqLen)
+// Start launches the server and waits until the model is loaded, so problems
+// such as a missing llama-server surface immediately rather than on first use.
+func (m *Model) Start(ctx context.Context) error {
+	lease, err := m.srv.Acquire(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("tokenizer: %w", err)
+		return err
 	}
-
-	opts, err := ort.NewSessionOptions()
-	if err != nil {
-		return nil, fmt.Errorf("session options: %w", err)
-	}
-	if err := configureExecutionProviders(opts); err != nil {
-		opts.Destroy()
-		return nil, fmt.Errorf("execution providers: %w", err)
-	}
-
-	session, err := ort.NewDynamicAdvancedSession(cfg.ModelPath, inputNames, outputNames, opts)
-	opts.Destroy()
-	if err != nil {
-		return nil, fmt.Errorf("create session: %w", err)
-	}
-
-	e := &Model{
-		cfg:     cfg,
-		tok:     tok,
-		session: session,
-		jobs:    make(chan embedJob, cfg.Workers*4),
-		closed:  make(chan struct{}),
-	}
-	for range cfg.Workers {
-		e.wg.Add(1)
-		go e.worker()
-	}
-	return e, nil
+	lease.Release()
+	return nil
 }
 
-// Workers returns the configured parallelism (NumCPU when unset).
-func (e *Model) Workers() int {
-	return e.cfg.Workers
+// Close stops the server.
+func (m *Model) Close() {
+	_ = m.srv.Close()
 }
 
-// worker drains the jobs channel and runs ONNX inference on each item.
-// ONNX Runtime is thread-safe; all workers share the single session.
-func (e *Model) worker() {
-	defer e.wg.Done()
-	for job := range e.jobs {
-		vec, err := e.infer(job.text)
-		job.result <- embedResult{vec: vec, err: err}
-	}
-}
-
-// Embed tokenizes text, runs inference via the worker pool, and returns a
-// normalized embedding vector. Safe to call from multiple goroutines.
-func (e *Model) Embed(ctx context.Context, text string) ([]float32, error) {
-	result := make(chan embedResult, 1)
-	select {
-	case e.jobs <- embedJob{text: text, result: result}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-e.closed:
-		return nil, fmt.Errorf("engine closed")
-	}
-	select {
-	case r := <-result:
-		return r.vec, r.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-// infer runs a single forward pass through the model for the given text.
-func (e *Model) infer(text string) ([]float32, error) {
-	enc := e.tok.Encode(text)
-	shape := ort.NewShape(1, int64(MaxSeqLen))
-
-	inputIDs, err := ort.NewTensor(shape, enc.InputIDs)
+// Embed returns the normalized embedding of a passage.
+func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
+	vecs, err := m.BatchEmbed(ctx, []string{text})
 	if err != nil {
 		return nil, err
 	}
-	defer inputIDs.Destroy()
-
-	attnMask, err := ort.NewTensor(shape, enc.AttentionMask)
-	if err != nil {
-		return nil, err
-	}
-	defer attnMask.Destroy()
-
-	typeIDs, err := ort.NewTensor(shape, enc.TokenTypeIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer typeIDs.Destroy()
-
-	inputs := []ort.Value{inputIDs, attnMask, typeIDs}
-	// Nil slot: Run auto-allocates the output tensor.
-	outputs := make([]ort.Value, 1)
-	if err := e.session.Run(inputs, outputs); err != nil {
-		return nil, fmt.Errorf("inference: %w", err)
-	}
-	defer outputs[0].Destroy()
-
-	// last_hidden_state: [1, seq_len, hidden_size]
-	hidden, ok := outputs[0].(*ort.Tensor[float32])
-	if !ok {
-		return nil, fmt.Errorf("unexpected output type %T", outputs[0])
-	}
-	data := hidden.GetData()
-	hiddenSize := len(data) / MaxSeqLen
-
-	return l2Normalize(meanPool(data, enc.AttentionMask, MaxSeqLen, hiddenSize)), nil
+	return vecs[0], nil
 }
 
-// meanPool averages the token embeddings, excluding padding tokens.
-func meanPool(data []float32, mask []int64, seqLen, hiddenSize int) []float32 {
-	out := make([]float32, hiddenSize)
-	var count float32
-	for i := range seqLen {
-		if mask[i] == 0 {
-			continue
-		}
-		count++
-		row := data[i*hiddenSize : (i+1)*hiddenSize]
-		for j, v := range row {
-			out[j] += v
-		}
+// EmbedQuery returns the normalized embedding of a search query, with the
+// retrieval instruction bge expects for queries.
+func (m *Model) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	return m.Embed(ctx, queryInstruction+query)
+}
+
+// BatchEmbed returns one normalized embedding per text, in order. Every text
+// must be at most MaxTokens long (see CountTokens); longer inputs are rejected
+// by the server rather than truncated.
+func (m *Model) BatchEmbed(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
 	}
-	if count > 0 {
-		for j := range out {
-			out[j] /= count
-		}
+	var resp struct {
+		Data []struct {
+			Index     int       `json:"index"`
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
 	}
-	return out
+	if err := m.post(ctx, "/v1/embeddings", map[string]any{"input": texts}, &resp); err != nil {
+		return nil, fmt.Errorf("embed %d texts: %w", len(texts), err)
+	}
+	if len(resp.Data) != len(texts) {
+		return nil, fmt.Errorf("embed: got %d vectors for %d texts", len(resp.Data), len(texts))
+	}
+	vecs := make([][]float32, len(texts))
+	for _, d := range resp.Data {
+		if d.Index < 0 || d.Index >= len(texts) || len(d.Embedding) != Dimensions {
+			return nil, fmt.Errorf("embed: bad vector at index %d (length %d)", d.Index, len(d.Embedding))
+		}
+		vecs[d.Index] = l2Normalize(d.Embedding)
+	}
+	return vecs, nil
+}
+
+// CountTokens returns how many model tokens text occupies, excluding the
+// special tokens added at embedding time. Compare against MaxTokens.
+func (m *Model) CountTokens(ctx context.Context, text string) (int, error) {
+	var resp struct {
+		Tokens []int `json:"tokens"`
+	}
+	if err := m.post(ctx, "/tokenize", map[string]any{"content": text}, &resp); err != nil {
+		return 0, fmt.Errorf("tokenize: %w", err)
+	}
+	return len(resp.Tokens), nil
+}
+
+// post sends a JSON request to the server and decodes a JSON response.
+func (m *Model) post(ctx context.Context, path string, body, out any) error {
+	lease, err := m.srv.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, lease.BaseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+lease.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, errBodyLimit))
+		return fmt.Errorf("llama-server %s: %s: %s", path, resp.Status, bytes.TrimSpace(msg))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 func l2Normalize(v []float32) []float32 {
-	var norm float64
+	var sum float64
 	for _, x := range v {
-		norm += float64(x) * float64(x)
+		sum += float64(x) * float64(x)
 	}
-	if norm == 0 {
+	if sum == 0 {
 		return v
 	}
-	norm = math.Sqrt(norm)
+	n := math.Sqrt(sum)
 	out := make([]float32, len(v))
 	for i, x := range v {
-		out[i] = float32(float64(x) / norm)
+		out[i] = float32(float64(x) / n)
 	}
 	return out
-}
-
-// Close stops the worker pool and frees the ONNX session. It deliberately does
-// NOT destroy the global ORT environment — that singleton is shared across
-// Model instances and outlives any single Model. Tear it down once at process
-// exit via ShutdownRuntime.
-func (e *Model) Close() {
-	e.closeOnce.Do(func() {
-		close(e.closed)
-		close(e.jobs)
-		e.wg.Wait()
-		e.session.Destroy()
-	})
-}
-
-// ShutdownRuntime destroys the process-global ORT environment if it was
-// initialized. Call once during application shutdown, after all engines are
-// closed. Safe to call when the environment was never initialized.
-func ShutdownRuntime() {
-	if ort.IsInitialized() {
-		_ = ort.DestroyEnvironment()
-	}
 }

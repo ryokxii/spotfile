@@ -1,12 +1,16 @@
 package llamaserver
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 )
+
+// ErrNotFound is returned (wrapped) when no llama-server executable exists.
+var ErrNotFound = errors.New("llama-server not found")
 
 // EnvBinary overrides where llama-server is found, e.g. to test a custom build.
 const EnvBinary = "SPOTFILE_LLAMA_SERVER"
@@ -21,7 +25,7 @@ func Locate() (string, error) {
 func locate(executable func() (string, error)) (string, error) {
 	if p := os.Getenv(EnvBinary); p != "" {
 		if !isFile(p) {
-			return "", fmt.Errorf("%s=%q is not a file", EnvBinary, p)
+			return "", fmt.Errorf("%w: %s=%q is not a file", ErrNotFound, EnvBinary, p)
 		}
 		return p, nil
 	}
@@ -33,7 +37,7 @@ func locate(executable func() (string, error)) (string, error) {
 	if p, err := exec.LookPath(binaryName()); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("%s not found: bundle it next to the app, install llama.cpp, or set %s", binaryName(), EnvBinary)
+	return "", fmt.Errorf("%w: bundle %s next to the app, install llama.cpp, or set %s", ErrNotFound, binaryName(), EnvBinary)
 }
 
 func binaryName() string {

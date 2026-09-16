@@ -1,10 +1,8 @@
 export namespace main {
 	
 	export class EngineConfig {
-	    libraryPath: string;
 	    modelPath: string;
-	    vocabPath: string;
-	    workers: number;
+	    serverPath: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EngineConfig(source);
@@ -12,10 +10,8 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.libraryPath = source["libraryPath"];
 	        this.modelPath = source["modelPath"];
-	        this.vocabPath = source["vocabPath"];
-	        this.workers = source["workers"];
+	        this.serverPath = source["serverPath"];
 	    }
 	}
 

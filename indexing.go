@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"spotfile/engine/embedder"
 	"spotfile/engine/indexing"
 	"spotfile/engine/vectorstore"
 
@@ -97,7 +98,57 @@ func (a *App) indexFolder(dir string) error {
 		items = append(items, indexing.PathPriority{Path: p, Priority: indexing.PriorityLow})
 	}
 
-	a.indexer.Enqueue(items, indexing.Hooks{
+	a.indexer.Enqueue(items, a.progressHooks(func(jobTotal int) {
+		log.Printf("index: complete folder=%q chunks=%d files=%d", dir, jobTotal, len(indexed))
+		a.indexMu.Unlock()
+	}))
+
+	return nil
+}
+
+// rebuildStaleIndex re-indexes documents from a store built by an older format
+// or embedding model, reporting progress like a folder index. Files that no
+// longer exist are dropped.
+func (a *App) rebuildStaleIndex(paths []string) {
+	existing := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			existing = append(existing, p)
+		}
+	}
+	if len(existing) == 0 {
+		return
+	}
+	if !a.indexMu.TryLock() {
+		log.Printf("index: skip rebuild of %d documents: indexing already in progress", len(existing))
+		return
+	}
+	log.Printf("index: rebuilding %d documents for embedding model %s", len(existing), embedder.ID)
+
+	wailsruntime.EventsEmit(a.ctx, "index:start", map[string]any{"total": len(existing), "dir": ""})
+	totalChunks, err := indexing.CountChunks(a.ctx, existing)
+	if err != nil {
+		a.indexMu.Unlock()
+		log.Printf("index: rebuild aborted: %v", err)
+		wailsruntime.EventsEmit(a.ctx, "index:error", err.Error())
+		return
+	}
+	wailsruntime.EventsEmit(a.ctx, "index:prepared", map[string]any{"totalChunks": totalChunks})
+
+	items := make([]indexing.PathPriority, len(existing))
+	for i, p := range existing {
+		items[i] = indexing.PathPriority{Path: p, Priority: indexing.PriorityLow}
+	}
+	a.indexer.Enqueue(items, a.progressHooks(func(jobTotal int) {
+		log.Printf("index: rebuild complete chunks=%d files=%d", jobTotal, len(existing))
+		a.indexMu.Unlock()
+	}))
+}
+
+// progressHooks emits index:chunk per stored chunk and index:done at the end,
+// then runs onDone.
+func (a *App) progressHooks(onDone func(jobTotal int)) indexing.Hooks {
+	return indexing.Hooks{
 		OnChunk: func(chunk vectorstore.EmbeddedChunk, jobTotal int) {
 			wailsruntime.EventsEmit(a.ctx, "index:chunk", map[string]any{
 				"total": jobTotal,
@@ -106,12 +157,9 @@ func (a *App) indexFolder(dir string) error {
 		},
 		OnDone: func(jobTotal int) {
 			wailsruntime.EventsEmit(a.ctx, "index:done", jobTotal)
-			log.Printf("index: complete folder=%q chunks=%d files=%d", dir, jobTotal, len(indexed))
-			a.indexMu.Unlock()
+			onDone(jobTotal)
 		},
-	})
-
-	return nil
+	}
 }
 
 // restartWatcher (re)starts the recursive file watcher rooted at dir, wired to
@@ -159,17 +207,8 @@ func (a *App) IndexFiles(paths []string) error {
 	for i, p := range paths {
 		items[i] = indexing.PathPriority{Path: p, Priority: indexing.PriorityHigh}
 	}
-	a.indexer.Enqueue(items, indexing.Hooks{
-		OnChunk: func(chunk vectorstore.EmbeddedChunk, jobTotal int) {
-			wailsruntime.EventsEmit(a.ctx, "index:chunk", map[string]any{
-				"total": jobTotal,
-				"path":  chunk.DocPath,
-			})
-		},
-		OnDone: func(jobTotal int) {
-			wailsruntime.EventsEmit(a.ctx, "index:done", jobTotal)
-			log.Printf("index: complete chunks=%d files=%d", jobTotal, len(paths))
-		},
-	})
+	a.indexer.Enqueue(items, a.progressHooks(func(jobTotal int) {
+		log.Printf("index: complete chunks=%d files=%d", jobTotal, len(paths))
+	}))
 	return nil
 }
