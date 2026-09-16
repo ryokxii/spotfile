@@ -34,6 +34,7 @@
 
   // Indexing (forwarded to StatusBar)
   let indexing = false
+  let indexError = ''
   let indexedCount = 0
   let indexedDocuments = 0
   let totalChunks = 0
@@ -51,6 +52,7 @@
 
   $: hint =
     engineError ? engineError.split('\n')[0]
+    : indexError ? indexError.split('\n')[0]
     : phase === 'idle' && !hasFiles ? 'Choose a folder to get started'
     : phase === 'idle' ? 'Ready — type your question and press Enter'
     : phase === 'loading' ? 'Searching…'
@@ -58,9 +60,12 @@
     : ''
 
   onMount(() => {
-    EventsOn('engine:ready', () => { engineReady = true })
+    EventsOn('engine:ready', () => { engineReady = true; engineError = '' })
     EventsOn('engine:error', (msg: string) => { engineError = msg })
     EventsOn('index:start', (data: any) => {
+      // Indexing only starts once the engine is up, so a startup error is stale.
+      engineError = ''
+      indexError = ''
       indexing = true
       indexedCount = 0
       indexedDocuments = 0
@@ -86,6 +91,11 @@
       hasFiles = true
       engineReady = true // reaching index:done proves the engine is ready, even if engine:ready was missed
     })
+    EventsOn('index:error', (msg: string) => {
+      indexing = false
+      currentFile = ''
+      indexError = msg
+    })
     EventsOn('watcher:started', () => { watcherActive = true; engineReady = true })
     EventsOn('watcher:reindexing', (data: any) => { reindexing = true; currentFile = data.path })
     EventsOn('watcher:done', () => { reindexing = false; currentFile = '' })
@@ -95,9 +105,10 @@
     try {
       const dir = await SelectFolder()
       if (!dir) return
+      indexError = ''
       await IndexFolder(dir)
     } catch (e: any) {
-      engineError = e?.message || String(e)
+      indexError = e?.message || String(e)
     }
   }
 
@@ -193,30 +204,30 @@
           <span class="spinner" aria-label="Searching" role="status" />
         {:else if engineError}
           <span class="engine-error-dot" title={engineError} aria-label="Engine error" />
-        {:else}
-          <!-- Folder picker button — always visible -->
-          <button
-            class="icon-btn"
-            title={hasFiles ? `Indexed: ${filename(selectedFolder) || 'folder'} — click to re-index` : 'Choose a folder to index'}
-            on:click={pickFolder}
-            aria-label="Choose folder to index"
-          >
-            {#if hasFiles}
-              <svg viewBox="0 0 20 20" fill="none">
-                <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-                <path d="M7 11l2 2 4-4" stroke="rgba(202,138,4,0.9)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            {:else}
-              <svg viewBox="0 0 20 20" fill="none">
-                <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-                <path d="M2 9h16" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
-              </svg>
-            {/if}
-          </button>
         {/if}
+
+        <!-- Folder picker button — always visible, so indexing can be retried after an error -->
+        <button
+          class="icon-btn"
+          title={hasFiles ? `Indexed: ${filename(selectedFolder) || 'folder'} — click to re-index` : 'Choose a folder to index'}
+          on:click={pickFolder}
+          aria-label="Choose folder to index"
+        >
+          {#if hasFiles}
+            <svg viewBox="0 0 20 20" fill="none">
+              <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M7 11l2 2 4-4" stroke="rgba(202,138,4,0.9)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          {:else}
+            <svg viewBox="0 0 20 20" fill="none">
+              <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M2 9h16" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+            </svg>
+          {/if}
+        </button>
       </div>
 
-      <p class="hint" class:error={phase === 'error' || !!engineError}>{hint}</p>
+      <p class="hint" class:error={phase === 'error' || !!engineError || !!indexError} role="status" aria-live="polite">{hint}</p>
     </div>
 
 

@@ -16,13 +16,26 @@ var ErrNotFound = errors.New("llama-server not found")
 const EnvBinary = "SPOTFILE_LLAMA_SERVER"
 
 // Locate finds llama-server, checking in order: the EnvBinary override, a copy
-// bundled next to the running executable, then PATH (development installs such
-// as Homebrew).
+// bundled next to the running executable, PATH, then common install
+// directories. The last step matters for GUI apps: macOS launches apps from
+// Finder with PATH=/usr/bin:/bin:/usr/sbin:/sbin, which omits Homebrew.
 func Locate() (string, error) {
-	return locate(os.Executable)
+	return locate(os.Executable, installDirs())
 }
 
-func locate(executable func() (string, error)) (string, error) {
+// installDirs lists where package managers put llama-server outside PATH.
+func installDirs() []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{"/opt/homebrew/bin", "/usr/local/bin"} // Homebrew on Apple Silicon, Intel
+	case "linux":
+		return []string{"/home/linuxbrew/.linuxbrew/bin", "/usr/local/bin"}
+	default:
+		return nil
+	}
+}
+
+func locate(executable func() (string, error), dirs []string) (string, error) {
 	if p := os.Getenv(EnvBinary); p != "" {
 		if !isFile(p) {
 			return "", fmt.Errorf("%w: %s=%q is not a file", ErrNotFound, EnvBinary, p)
@@ -36,6 +49,11 @@ func locate(executable func() (string, error)) (string, error) {
 	}
 	if p, err := exec.LookPath(binaryName()); err == nil {
 		return p, nil
+	}
+	for _, dir := range dirs {
+		if p := filepath.Join(dir, binaryName()); isFile(p) {
+			return p, nil
+		}
 	}
 	return "", fmt.Errorf("%w: bundle %s next to the app, install llama.cpp, or set %s", ErrNotFound, binaryName(), EnvBinary)
 }

@@ -23,6 +23,8 @@ func TestLocate(t *testing.T) {
 	bundledBin := writeExecutable(t, bundledDir)
 	pathDir := t.TempDir()
 	pathBin := writeExecutable(t, pathDir)
+	installDir := t.TempDir()
+	installBin := writeExecutable(t, installDir)
 
 	tests := []struct {
 		name       string
@@ -35,6 +37,8 @@ func TestLocate(t *testing.T) {
 		{"env override wins", envBin, filepath.Join(bundledDir, "spotfile"), pathDir, envBin, false},
 		{"bundled next to app", "", filepath.Join(bundledDir, "spotfile"), pathDir, bundledBin, false},
 		{"falls back to PATH", "", filepath.Join(t.TempDir(), "spotfile"), pathDir, pathBin, false},
+		// Apps opened from Finder get a minimal PATH without Homebrew.
+		{"falls back to install dirs when PATH lacks it", "", filepath.Join(t.TempDir(), "spotfile"), t.TempDir(), installBin, false},
 		{"missing env target is an error", filepath.Join(t.TempDir(), "nope"), "", pathDir, "", true},
 		{"nothing found", "", filepath.Join(t.TempDir(), "spotfile"), t.TempDir(), "", true},
 	}
@@ -42,7 +46,11 @@ func TestLocate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(EnvBinary, tt.env)
 			t.Setenv("PATH", tt.path)
-			got, err := locate(func() (string, error) { return tt.executable, nil })
+			dirs := []string{t.TempDir(), installDir}
+			if tt.name == "nothing found" {
+				dirs = []string{t.TempDir()}
+			}
+			got, err := locate(func() (string, error) { return tt.executable, nil }, dirs)
 			if tt.wantErr {
 				if !errors.Is(err, ErrNotFound) {
 					t.Fatalf("locate = %q, %v; want ErrNotFound", got, err)
