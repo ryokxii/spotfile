@@ -54,6 +54,13 @@ func (vs *VectorStore) Len() int {
 	return n
 }
 
+// DocCount returns the number of distinct documents with stored chunks.
+func (vs *VectorStore) DocCount() int {
+	vs.mu.RLock()
+	defer vs.mu.RUnlock()
+	return len(vs.docs)
+}
+
 // Search returns the topK nearest chunks by cosine similarity. Embeddings are
 // assumed L2-normalized, so similarity == dot product. Returns an empty slice
 // for an empty query or non-positive topK. Candidates whose embedding
