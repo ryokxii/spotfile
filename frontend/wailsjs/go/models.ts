@@ -14,6 +14,24 @@ export namespace main {
 	        this.serverPath = source["serverPath"];
 	    }
 	}
+	export class EngineStatus {
+	    ready: boolean;
+	    error: string;
+	    documents: number;
+	    chunks: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new EngineStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ready = source["ready"];
+	        this.error = source["error"];
+	        this.documents = source["documents"];
+	        this.chunks = source["chunks"];
+	    }
+	}
 
 }
 

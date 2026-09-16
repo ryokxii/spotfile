@@ -88,29 +88,33 @@
     flex: 1;
     min-width: 0;
     overflow: auto;
-    padding: 1.5rem;
-    background: #181818;
+    padding: var(--space-lg) var(--space-xl) var(--space-xxl);
   }
 
   .loading,
   .viewer-error {
-    color: #c28a04;
-    padding: 2rem;
+    padding: var(--space-xl);
     text-align: center;
+    color: var(--color-ink-faint);
+  }
+
+  .viewer-error {
+    color: var(--color-urgent);
   }
 
   .text-body {
-    color: #eaeaea;
-    font-size: 1rem;
-    line-height: 1.7;
+    font-family: var(--font-code);
+    font-size: var(--text-small-size);
+    line-height: var(--text-body-line);
+    color: var(--color-ink);
     white-space: pre-wrap;
     word-break: break-word;
   }
 
   .markdown-body {
-    color: #eaeaea;
-    font-size: 1rem;
-    line-height: 1.7;
+    max-width: var(--search-column-max);
+    color: var(--color-ink);
+    line-height: var(--text-body-line);
   }
 
   /* Injected {@html} content isn't visible to Svelte's scoping, so these
@@ -121,88 +125,113 @@
   .markdown-body :global(h4),
   .markdown-body :global(h5),
   .markdown-body :global(h6) {
-    color: #fff;
-    font-weight: 600;
-    line-height: 1.25;
-    margin: 1.6em 0 0.6em;
+    font-weight: var(--text-heading-weight);
+    line-height: var(--text-title-line);
+    margin: var(--space-lg) 0 var(--space-xs);
   }
   .markdown-body :global(h1:first-child),
   .markdown-body :global(h2:first-child),
   .markdown-body :global(h3:first-child) {
     margin-top: 0;
   }
-  .markdown-body :global(h1) { font-size: 1.8rem; padding-bottom: 0.3em; border-bottom: 1px solid #2a2a2a; }
-  .markdown-body :global(h2) { font-size: 1.45rem; padding-bottom: 0.25em; border-bottom: 1px solid #242424; }
-  .markdown-body :global(h3) { font-size: 1.2rem; }
-  .markdown-body :global(h4) { font-size: 1.05rem; }
-  .markdown-body :global(h5) { font-size: 0.95rem; }
-  .markdown-body :global(h6) { font-size: 0.9rem; color: #b8b8b8; }
+  .markdown-body :global(h1) {
+    font-size: var(--text-title-size);
+    padding-bottom: var(--space-xs);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .markdown-body :global(h2) {
+    font-size: var(--text-heading-size);
+    padding-bottom: var(--space-xxs);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .markdown-body :global(h3),
+  .markdown-body :global(h4) {
+    font-size: var(--text-body-size);
+  }
+  .markdown-body :global(h5),
+  .markdown-body :global(h6) {
+    font-size: var(--text-small-size);
+    color: var(--color-ink-secondary);
+  }
 
-  .markdown-body :global(p) { margin: 0 0 1em; }
+  .markdown-body :global(p) {
+    margin: 0 0 var(--space-md);
+  }
 
-  .markdown-body :global(a) { color: #e0a824; text-decoration: none; }
-  .markdown-body :global(a:hover) { text-decoration: underline; }
+  .markdown-body :global(a) {
+    color: var(--color-secondary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
 
   .markdown-body :global(ul),
-  .markdown-body :global(ol) { margin: 0 0 1em; padding-left: 1.6em; }
+  .markdown-body :global(ol) {
+    margin: 0 0 var(--space-md);
+    padding-left: var(--space-lg);
+  }
   .markdown-body :global(ul) { list-style: disc; }
   .markdown-body :global(ol) { list-style: decimal; }
-  .markdown-body :global(li) { margin: 0.25em 0; }
-  .markdown-body :global(li > ul),
-  .markdown-body :global(li > ol) { margin: 0.25em 0; }
+  .markdown-body :global(li) { margin: var(--space-xxs) 0; }
 
   .markdown-body :global(code) {
-    font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
-    font-size: 0.88em;
-    background: #26262b;
-    padding: 0.15em 0.4em;
-    border-radius: 4px;
+    font-family: var(--font-code);
+    font-size: 0.9em;
+    background-color: var(--color-surface-sunken);
+    padding: 1px var(--space-xxs);
+    border-radius: var(--radius-xs);
   }
   .markdown-body :global(pre) {
-    background: #1c1c20;
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
-    padding: 1em;
+    background-color: var(--color-surface-sunken);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    padding: var(--space-md);
     overflow-x: auto;
-    margin: 0 0 1em;
+    margin: 0 0 var(--space-md);
   }
   .markdown-body :global(pre code) {
     background: none;
     padding: 0;
-    font-size: 0.85rem;
-    line-height: 1.55;
+    font-size: var(--text-small-size);
   }
 
   .markdown-body :global(blockquote) {
-    margin: 0 0 1em;
-    padding: 0.2em 1em;
-    border-left: 3px solid #c28a04;
-    color: #b6b6b6;
+    margin: 0 0 var(--space-md);
+    padding: var(--space-xxs) var(--space-md);
+    border-left: 2px solid var(--color-hairline-strong);
+    color: var(--color-ink-secondary);
   }
 
   .markdown-body :global(hr) {
     border: none;
-    border-top: 1px solid #2a2a2a;
-    margin: 1.8em 0;
+    border-top: 1px solid var(--color-hairline);
+    margin: var(--space-xl) 0;
   }
 
   .markdown-body :global(table) {
     border-collapse: collapse;
-    margin: 0 0 1em;
+    margin: 0 0 var(--space-md);
     display: block;
     overflow-x: auto;
     max-width: 100%;
   }
   .markdown-body :global(th),
   .markdown-body :global(td) {
-    border: 1px solid #2f2f2f;
-    padding: 0.5em 0.8em;
+    border: 1px solid var(--color-hairline);
+    padding: var(--space-xs) var(--space-sm);
     text-align: left;
   }
-  .markdown-body :global(th) { background: #242428; font-weight: 600; }
-  .markdown-body :global(tr:nth-child(even) td) { background: #1e1e22; }
+  .markdown-body :global(th) {
+    background-color: var(--color-surface-raised);
+    font-weight: var(--text-body-strong-weight);
+  }
 
-  .markdown-body :global(img) { max-width: 100%; height: auto; border-radius: 6px; }
+  .markdown-body :global(img) {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-xs);
+  }
 
-  .markdown-body :global(strong) { color: #fff; font-weight: 600; }
+  .markdown-body :global(strong) {
+    font-weight: var(--text-heading-weight);
+  }
 </style>

@@ -153,8 +153,8 @@ function ensureHighlightStyle(): void {
   const style = document.createElement('style')
   style.id = HIGHLIGHT_STYLE_ID
   style.textContent =
-    `::highlight(${HIGHLIGHT_NAME}) { background: rgba(194, 138, 4, 0.4); color: #fff; }` +
-    `mark.${FALLBACK_MARK_CLASS} { background: rgba(194, 138, 4, 0.4); color: #fff; border-radius: 2px; }`
+    `::highlight(${HIGHLIGHT_NAME}) { background: var(--color-primary-wash-strong); color: var(--color-ink); }` +
+    `mark.${FALLBACK_MARK_CLASS} { background: var(--color-primary-wash-strong); color: var(--color-ink); border-radius: var(--radius-xs); }`
   document.head.appendChild(style)
 }
 

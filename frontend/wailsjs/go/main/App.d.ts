@@ -3,6 +3,8 @@
 import {main} from '../models';
 import {vectorstore} from '../models';
 
+export function EngineStatus():Promise<main.EngineStatus>;
+
 export function GenerateAnswer(arg1:string,arg2:number):Promise<string>;
 
 export function IndexFiles(arg1:Array<string>):Promise<void>;
