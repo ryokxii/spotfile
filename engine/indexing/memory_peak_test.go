@@ -1,4 +1,4 @@
-package engine
+package indexing
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"spotfile/engine/embedder/embeddertest"
 )
 
 const (
@@ -44,7 +46,7 @@ func TestIndexPeakMemory(t *testing.T) {
 	if testing.Short() {
 		t.Skip("memory test indexes a large document; skipped in -short mode")
 	}
-	realAssetEngine(t, 1) // skip early when assets are absent
+	embeddertest.RealModel(t, 1) // skip early when assets are absent
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestIndexPeakMemory$", "-test.v")
 	cmd.Env = append(os.Environ(), memChildEnv+"=1")
@@ -63,7 +65,7 @@ func TestIndexPeakMemory(t *testing.T) {
 
 func runIndexForMemory(t *testing.T) {
 	// Match the app default: Workers → runtime.NumCPU().
-	eng := realAssetEngine(t, 0)
+	model := embeddertest.RealModel(t, 0)
 
 	path := filepath.Join(t.TempDir(), "large.txt")
 	if err := os.WriteFile(path, []byte(syntheticDocument()), 0o600); err != nil {
@@ -71,7 +73,7 @@ func runIndexForMemory(t *testing.T) {
 	}
 
 	n := 0
-	for range eng.IndexFiles(context.Background(), []string{path}) {
+	for range EmbedFiles(context.Background(), model, []string{path}) {
 		n++
 	}
 	if n == 0 {

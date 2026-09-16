@@ -1,4 +1,5 @@
-package engine
+// Package extract turns files into plain text and splits it into chunks.
+package extract
 
 import (
 	"fmt"

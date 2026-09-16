@@ -1,4 +1,4 @@
-package engine
+package indexing
 
 import (
 	"context"
@@ -112,7 +112,7 @@ func (fw *FileWatcher) reindexPath(path string) {
 	log.Printf("watcher: detected change in %s, re-indexing...", path)
 	fw.indexer.Enqueue(
 		[]PathPriority{{Path: path, Priority: PriorityUrgent}},
-		IndexHooks{
+		Hooks{
 			OnStart: func() {
 				wailsruntime.EventsEmit(fw.ctx, "watcher:reindexing", map[string]any{"path": path})
 			},
