@@ -30,6 +30,7 @@ type VectorStore struct {
 	mu          sync.RWMutex
 	docs        map[string][]EmbeddedChunk
 	persistPath string // where Persist() writes; empty disables autosave
+	embedder    string // ID of the model that produced the vectors; saved with the store
 }
 
 // Add appends a chunk to its document's bucket.

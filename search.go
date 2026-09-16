@@ -33,7 +33,7 @@ func (a *App) Search(query string, topK int) ([]vectorstore.SearchResult, error)
 
 	// Embed the query with the locally loaded BGE ONNX model. No query text or
 	// document content leaves this process.
-	vec, err := a.embedder.Embed(a.ctx, query)
+	vec, err := a.embedder.EmbedQuery(a.ctx, query)
 	if err != nil {
 		log.Printf("search: embedding failed query=%q duration=%s error=%v", query, time.Since(started).Round(time.Millisecond), err)
 		return nil, fmt.Errorf("embed local search query: %w", err)

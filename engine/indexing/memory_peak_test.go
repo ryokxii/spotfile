@@ -1,3 +1,5 @@
+//go:build !windows
+
 package indexing
 
 import (
@@ -6,22 +8,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
-	"syscall"
 	"testing"
+	"time"
 
 	"spotfile/engine/embedder/embeddertest"
 )
 
 const (
-	// peakRSSBudget is the ceiling for indexing one large document. Before the
-	// fix, the app peaked at 12.7 GB (vmmap physical footprint) on a 60-page PDF.
-	peakRSSBudget = 2 << 30 // 2 GiB
+	// peakTreeRSSBudget caps total memory while indexing one large document.
+	// Before the llama.cpp switch the app peaked at 12.7 GB (CoreML) and later
+	// 1.6 GB (ONNX Runtime CPU); llama.cpp measured ~0.2 GB for the server.
+	peakTreeRSSBudget = 512 << 20 // 512 MiB
 
 	memChildEnv     = "SPOTFILE_MEMTEST_CHILD"
 	memDocPages     = 60
 	memWordsPerPage = 500
+	memSampleEvery  = 50 * time.Millisecond
 )
 
 var memVocabulary = strings.Fields(`
@@ -33,11 +37,12 @@ var memVocabulary = strings.Fields(`
 	river mountain city village market harbor forest weather season journey`)
 
 // TestIndexPeakMemory indexes a ~60-page document through the real pipeline
-// and asserts the process peak RSS stays within peakRSSBudget.
+// and asserts the combined memory of the indexing process and its llama-server
+// child stays within peakTreeRSSBudget.
 //
-// ONNX Runtime allocates outside the Go heap, so runtime.MemStats cannot see
-// it. The work runs in a child process instead, and the parent reads the
-// child's kernel-reported max RSS — isolated from any other test in this run.
+// Embedding happens in a separate process, so the work runs in a child test
+// process and the parent samples the resident memory of that child plus all of
+// its descendants. RSS includes the memory-mapped model file.
 func TestIndexPeakMemory(t *testing.T) {
 	if os.Getenv(memChildEnv) == "1" {
 		runIndexForMemory(t)
@@ -46,26 +51,47 @@ func TestIndexPeakMemory(t *testing.T) {
 	if testing.Short() {
 		t.Skip("memory test indexes a large document; skipped in -short mode")
 	}
-	embeddertest.RealModel(t, 1) // skip early when assets are absent
+	embeddertest.RealModel(t) // skip early when llama.cpp or the model is absent
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestIndexPeakMemory$", "-test.v")
 	cmd.Env = append(os.Environ(), memChildEnv+"=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("child indexing run failed: %v\n%s", err, out)
+	var out strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
 	}
 
-	peak := maxRSSBytes(cmd.ProcessState)
-	t.Logf("peak RSS indexing %d pages: %.2f GiB (budget %.2f GiB)",
-		memDocPages, gib(peak), gib(peakRSSBudget))
-	if peak > peakRSSBudget {
-		t.Fatalf("peak RSS %.2f GiB exceeds budget %.2f GiB", gib(peak), gib(peakRSSBudget))
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	var peak int64
+	tick := time.NewTicker(memSampleEvery)
+	defer tick.Stop()
+	for waiting := true; waiting; {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("child indexing run failed: %v\n%s", err, out.String())
+			}
+			waiting = false
+		case <-tick.C:
+			if rss, err := treeRSS(cmd.Process.Pid); err == nil {
+				peak = max(peak, rss)
+			}
+		}
+	}
+
+	t.Logf("peak RSS (indexer + llama-server) indexing %d pages: %.0f MiB (budget %.0f MiB)",
+		memDocPages, mib(peak), mib(peakTreeRSSBudget))
+	if peak == 0 {
+		t.Fatal("no memory samples taken")
+	}
+	if peak > peakTreeRSSBudget {
+		t.Fatalf("peak RSS %.0f MiB exceeds budget %.0f MiB", mib(peak), mib(peakTreeRSSBudget))
 	}
 }
 
 func runIndexForMemory(t *testing.T) {
-	// Match the app default: Workers → runtime.NumCPU().
-	model := embeddertest.RealModel(t, 0)
+	model := embeddertest.RealModel(t)
 
 	path := filepath.Join(t.TempDir(), "large.txt")
 	if err := os.WriteFile(path, []byte(syntheticDocument()), 0o600); err != nil {
@@ -82,6 +108,35 @@ func runIndexForMemory(t *testing.T) {
 	fmt.Printf("indexed %d chunks\n", n)
 }
 
+// treeRSS sums the resident memory of pid and all of its descendants.
+func treeRSS(root int) (int64, error) {
+	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,rss=").Output()
+	if err != nil {
+		return 0, err
+	}
+	children := map[int][]int{}
+	rssKB := map[int]int64{}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 3 {
+			continue
+		}
+		pid, _ := strconv.Atoi(f[0])
+		ppid, _ := strconv.Atoi(f[1])
+		rss, _ := strconv.ParseInt(f[2], 10, 64)
+		children[ppid] = append(children[ppid], pid)
+		rssKB[pid] = rss
+	}
+	var total int64
+	for stack := []int{root}; len(stack) > 0; {
+		pid := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		total += rssKB[pid]
+		stack = append(stack, children[pid]...)
+	}
+	return total * 1024, nil
+}
+
 // syntheticDocument returns a deterministic document of memDocPages pages.
 // Text files and PDF pages share the same chunk → embed path, which is where
 // the memory goes; a text file keeps the fixture free of binary assets.
@@ -94,16 +149,4 @@ func syntheticDocument() string {
 	return b.String()
 }
 
-func maxRSSBytes(ps *os.ProcessState) int64 {
-	ru, ok := ps.SysUsage().(*syscall.Rusage)
-	if !ok {
-		return 0
-	}
-	// ru_maxrss is bytes on darwin and kilobytes on linux.
-	if runtime.GOOS == "darwin" {
-		return ru.Maxrss
-	}
-	return ru.Maxrss * 1024
-}
-
-func gib(b int64) float64 { return float64(b) / (1 << 30) }
+func mib(b int64) float64 { return float64(b) / (1 << 20) }

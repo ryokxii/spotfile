@@ -1,6 +1,7 @@
 package llamaserver
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,8 +44,8 @@ func TestLocate(t *testing.T) {
 			t.Setenv("PATH", tt.path)
 			got, err := locate(func() (string, error) { return tt.executable, nil })
 			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("locate = %q, want error", got)
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("locate = %q, %v; want ErrNotFound", got, err)
 				}
 				return
 			}

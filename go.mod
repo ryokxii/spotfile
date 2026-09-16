@@ -6,7 +6,6 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/wailsapp/wails/v2 v2.12.0
-	github.com/yalue/onnxruntime_go v1.30.1
 	golang.org/x/sys v0.30.0
 )
 
