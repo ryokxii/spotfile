@@ -1,0 +1,79 @@
+name: Set up llama.cpp and embedding model
+description: >
+  Installs a pinned llama.cpp release build, points SPOTFILE_LLAMA_SERVER at its
+  llama-server, and downloads the bge-small-en-v1.5 GGUF into ~/.spotfile/models
+  with a SHA-256 check. Both are cached across runs.
+
+inputs:
+  llama-build:
+    description: llama.cpp release tag, e.g. b10964
+    required: true
+  llama-asset:
+    description: Release asset suffix, e.g. macos-arm64.tar.gz, ubuntu-x64.tar.gz, win-cpu-x64.zip
+    required: true
+  model-url:
+    description: Embedding model download URL
+    required: true
+  model-sha256:
+    description: Expected SHA-256 of the model file
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cache llama.cpp
+      id: llama-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/llama.cpp
+        key: llama.cpp-${{ inputs.llama-build }}-${{ inputs.llama-asset }}
+
+    - name: Download llama.cpp ${{ inputs.llama-build }}
+      if: steps.llama-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        dest="$RUNNER_TEMP/llama.cpp"
+        mkdir -p "$dest"
+        asset="llama-${{ inputs.llama-build }}-bin-${{ inputs.llama-asset }}"
+        gh release download "${{ inputs.llama-build }}" --repo ggml-org/llama.cpp \
+          --pattern "$asset" --dir "$RUNNER_TEMP"
+        case "$asset" in
+          *.zip)    unzip -q "$RUNNER_TEMP/$asset" -d "$dest" ;;
+          *.tar.gz) tar xzf "$RUNNER_TEMP/$asset" -C "$dest" ;;
+        esac
+
+    - name: Point Spotfile at llama-server
+      shell: bash
+      run: |
+        server=$(find "$RUNNER_TEMP/llama.cpp" -type f \( -name llama-server -o -name llama-server.exe \) | head -1)
+        if [ -z "$server" ]; then
+          echo "::error::llama-server not found in the llama.cpp archive"
+          exit 1
+        fi
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          server=$(cygpath -w "$server")
+        fi
+        "$server" --version
+        echo "SPOTFILE_LLAMA_SERVER=$server" >> "$GITHUB_ENV"
+
+    - name: Cache embedding model
+      id: model-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.spotfile/models
+        key: embed-model-${{ inputs.model-sha256 }}
+
+    - name: Download embedding model
+      if: steps.model-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ~/.spotfile/models
+        file=~/.spotfile/models/$(basename "${{ inputs.model-url }}")
+        curl -fsSL --retry 3 -o "$file" "${{ inputs.model-url }}"
+        if command -v sha256sum >/dev/null; then
+          echo "${{ inputs.model-sha256 }}  $file" | sha256sum -c -
+        else
+          echo "${{ inputs.model-sha256 }}  $file" | shasum -a 256 -c -
+        fi
