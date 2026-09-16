@@ -4,6 +4,8 @@
   import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
   import { ReadFileAsBase64 } from '../../wailsjs/go/main/App.js'
   import { base64ToBytes } from '../lib/base64'
+  import Icon from '../ui/Icon.svelte'
+  import PressableSurface from '../ui/PressableSurface.svelte'
   import ViewerShell from './ViewerShell.svelte'
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
@@ -23,8 +25,12 @@
   let scale = 1.25
   let matchTop = -1 // y of the topmost highlight (canvas px), -1 = none
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let pdfDoc: any = null
+
+  const HIGHLIGHT_ALPHA = 0.28
+  const ZOOM_STEP = 0.25
+  const ZOOM_MIN = 0.5
+  const ZOOM_MAX = 4
 
   async function loadPDF() {
     loading = true
@@ -74,7 +80,8 @@
     }
   }
 
-  // Draws amber highlight rectangles over text items that appear in highlightText.
+  // Draws primary-coloured highlight rectangles over text items that appear in
+  // highlightText. Canvas can't read CSS variables, so resolve the token here.
   async function renderHighlights(page: any, viewport: any) {
     if (!hlCanvas) return
 
@@ -86,7 +93,8 @@
     const textContent = await page.getTextContent()
     const normalTarget = normalize(highlightText)
 
-    ctx.fillStyle = 'rgba(202, 138, 4, 0.28)'
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()
+    ctx.globalAlpha = HIGHLIGHT_ALPHA
 
     let topY = Infinity
     for (const item of (textContent?.items ?? []) as any[]) {
@@ -179,24 +187,32 @@
 
 <ViewerShell {docPath} {onClose}>
   <div slot="toolbar" class="toolbar">
-    <div class="nav">
-      <button class="nav-btn" on:click={() => goToPage(currentPage - 1)} disabled={currentPage <= 1}>&lsaquo;</button>
-      <span class="page-info">Page {currentPage} / {totalPages}</span>
-      <button class="nav-btn" on:click={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages}>&rsaquo;</button>
-      <button class="zoom-btn" on:click={() => { scale = Math.max(0.5, scale - 0.25); renderPage(currentPage) }}>−</button>
-      <span class="zoom-label">{Math.round(scale * 100)}%</span>
-      <button class="zoom-btn" on:click={() => { scale = Math.min(4, scale + 0.25); renderPage(currentPage) }}>+</button>
-    </div>
     {#if highlightText}
-      <button
-        class="highlight-badge"
-        on:click={scrollToMatch}
-        disabled={matchTop < 0}
+      <PressableSurface
+        class="pdf-control"
+        label="Jump to match"
         title={matchTop < 0 ? 'Match not found on this page' : 'Jump to the highlighted match'}
+        disabled={matchTop < 0}
+        on:click={scrollToMatch}
       >
-        Highlighted match
-      </button>
+        <Icon name="target" size={16} />
+      </PressableSurface>
     {/if}
+    <PressableSurface class="pdf-control" label="Previous page" disabled={currentPage <= 1} on:click={() => goToPage(currentPage - 1)}>
+      <Icon name="chevron-left" size={16} />
+    </PressableSurface>
+    <span class="readout">{currentPage} / {totalPages}</span>
+    <PressableSurface class="pdf-control" label="Next page" disabled={currentPage >= totalPages} on:click={() => goToPage(currentPage + 1)}>
+      <Icon name="chevron-right" size={16} />
+    </PressableSurface>
+    <span class="divider" aria-hidden="true" />
+    <PressableSurface class="pdf-control" label="Zoom out" disabled={scale <= ZOOM_MIN} on:click={() => { scale = Math.max(ZOOM_MIN, scale - ZOOM_STEP); renderPage(currentPage) }}>
+      <Icon name="minus" size={16} />
+    </PressableSurface>
+    <span class="readout">{Math.round(scale * 100)}%</span>
+    <PressableSurface class="pdf-control" label="Zoom in" disabled={scale >= ZOOM_MAX} on:click={() => { scale = Math.min(ZOOM_MAX, scale + ZOOM_STEP); renderPage(currentPage) }}>
+      <Icon name="plus" size={16} />
+    </PressableSurface>
   </div>
 
   <div class="canvas-wrap" bind:this={canvasWrap}>
@@ -218,56 +234,29 @@
   .toolbar {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--space-xxs);
     flex-shrink: 0;
   }
 
-  .nav {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.85rem;
-    color: #636366;
+  :global(.pdf-control) {
+    padding: var(--space-xs);
+    color: var(--color-ink-secondary);
   }
 
-  .nav-btn, .zoom-btn {
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #aeaeb2;
-    border-radius: 5px;
-    padding: 0.2rem 0.6rem;
-    cursor: pointer;
-    font-size: 1rem;
-    line-height: 1;
-    transition: background 0.15s;
+  .readout {
+    min-width: calc(var(--space-xxl) + var(--space-xs));
+    text-align: center;
+    font-size: var(--text-small-size);
+    font-weight: var(--text-numeric-weight);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-faint);
   }
 
-  .nav-btn:disabled { opacity: 0.25; cursor: default; }
-  .nav-btn:not(:disabled):hover, .zoom-btn:hover { background: rgba(255, 255, 255, 0.13); }
-
-  .page-info, .zoom-label { min-width: 80px; text-align: center; color: #636366; }
-
-  .highlight-badge {
-    font-size: 0.72rem;
-    padding: 0.25rem 0.6rem;
-    border-radius: 20px;
-    border: 1px solid rgba(202, 138, 4, 0.35);
-    background: rgba(202, 138, 4, 0.15);
-    color: rgba(202, 138, 4, 0.9);
-    white-space: nowrap;
-    flex-shrink: 0;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .highlight-badge:hover:not(:disabled) {
-    background: rgba(202, 138, 4, 0.28);
-    border-color: rgba(202, 138, 4, 0.6);
-  }
-
-  .highlight-badge:disabled {
-    cursor: default;
-    opacity: 0.5;
+  .divider {
+    width: 1px;
+    height: var(--space-md);
+    margin: 0 var(--space-xs);
+    background-color: var(--color-hairline);
   }
 
   .canvas-wrap {
@@ -276,9 +265,10 @@
     overflow: auto;
     display: flex;
     align-items: flex-start;
-    justify-content: center;
-    padding: 1.25rem;
-    background: #0c0c0f;
+    /* No justify-content: center — it pushes a page wider than the pane past
+       the left scroll edge. Auto margins centre without clipping. */
+    padding: var(--space-lg);
+    background-color: var(--color-surface-sunken);
   }
 
   /* Stack PDF canvas and highlight overlay on top of each other */
@@ -286,12 +276,13 @@
     position: relative;
     display: inline-block;
     line-height: 0;
+    margin: 0 auto;
   }
 
   .pdf-canvas {
     display: block;
-    box-shadow: 0 4px 32px rgba(0, 0, 0, 0.6);
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--color-hairline);
   }
 
   /* Overlay canvas sits exactly on top of the PDF canvas, pointer-events off */
@@ -300,16 +291,18 @@
     top: 0;
     left: 0;
     pointer-events: none;
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
   }
 
-  .loading, .viewer-error {
-    color: #636366;
-    font-size: 0.95rem;
-    padding: 2rem;
-    text-align: center;
+  .loading,
+  .viewer-error {
     align-self: center;
+    padding: var(--space-xl);
+    text-align: center;
+    color: var(--color-ink-faint);
   }
 
-  .viewer-error { color: #ff453a; }
+  .viewer-error {
+    color: var(--color-urgent);
+  }
 </style>

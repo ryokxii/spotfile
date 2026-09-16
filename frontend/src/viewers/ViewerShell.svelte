@@ -4,6 +4,8 @@
   // A `toolbar` slot sits between the filename and close button for per-viewer
   // controls (e.g. the PDF pager/zoom).
   import { filename } from '../lib/path'
+  import Icon from '../ui/Icon.svelte'
+  import PressableSurface from '../ui/PressableSurface.svelte'
 
   export let docPath: string
   export let onClose: () => void = () => {}
@@ -13,7 +15,9 @@
   <header class="viewer-header">
     <span class="doc-name" title={docPath}>{filename(docPath)}</span>
     <slot name="toolbar" />
-    <button class="close-btn" on:click={onClose} aria-label="Close viewer">&times;</button>
+    <PressableSurface label="Close preview" title="Close preview (Esc)" class="viewer-close" on:click={onClose}>
+      <Icon name="close" size={16} />
+    </PressableSurface>
   </header>
   <div class="viewer-body">
     <slot />
@@ -26,43 +30,34 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: #141414;
+    background-color: var(--color-surface);
     overflow: hidden;
   }
 
   .viewer-header {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.65rem 1rem;
-    background: #1c1c1e;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    gap: var(--space-sm);
+    min-height: calc(var(--space-xxl) + var(--space-xs));
+    padding: var(--space-xs) var(--space-md) var(--space-xs) var(--space-lg);
+    border-bottom: 1px solid var(--color-hairline);
     flex-shrink: 0;
   }
 
   .doc-name {
     flex: 1;
     min-width: 0;
-    font-size: 0.85rem;
-    color: #aeaeb2;
+    font-weight: var(--text-body-strong-weight);
+    color: var(--color-ink);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .close-btn {
-    background: rgba(255, 255, 255, 0.08);
-    border: none;
-    color: #aeaeb2;
-    font-size: 1.3rem;
-    line-height: 1;
-    padding: 0.15rem 0.5rem;
-    border-radius: 5px;
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background 0.15s, color 0.15s;
+  :global(.viewer-close) {
+    padding: var(--space-xs);
+    color: var(--color-ink-secondary);
   }
-  .close-btn:hover { background: rgba(255, 69, 58, 0.2); color: #ff453a; }
 
   .viewer-body {
     flex: 1;

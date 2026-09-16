@@ -1,0 +1,45 @@
+/*
+ * The two families from context/DESIGN.md §3, bundled into the app (OFL, via
+ * @fontsource) so typography never depends on a network fetch. Only the
+ * weights the type ramp uses, Latin subset.
+ */
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('@fontsource/fraunces/files/fraunces-latin-600-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: italic;
+  font-weight: 600;
+  font-display: swap;
+  src: url('@fontsource/fraunces/files/fraunces-latin-600-italic.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Work Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('@fontsource/work-sans/files/work-sans-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Work Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('@fontsource/work-sans/files/work-sans-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Work Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('@fontsource/work-sans/files/work-sans-latin-600-normal.woff2') format('woff2');
+}

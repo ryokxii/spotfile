@@ -36,3 +36,20 @@ func TestVectorStoreSearchRejectsInvalidQuery(t *testing.T) {
 		})
 	}
 }
+
+func TestVectorStoreDocCount(t *testing.T) {
+	store := new(VectorStore)
+	if got := store.DocCount(); got != 0 {
+		t.Fatalf("empty store DocCount = %d, want 0", got)
+	}
+	store.Add(EmbeddedChunk{DocPath: "a.md", ChunkIdx: 0, Embedding: []float32{1, 0}})
+	store.Add(EmbeddedChunk{DocPath: "a.md", ChunkIdx: 1, Embedding: []float32{0, 1}})
+	store.Add(EmbeddedChunk{DocPath: "b.pdf", ChunkIdx: 0, Embedding: []float32{1, 0}})
+	if got := store.DocCount(); got != 2 {
+		t.Fatalf("DocCount = %d, want 2 (documents, not chunks)", got)
+	}
+	store.RemoveDoc("a.md")
+	if got := store.DocCount(); got != 1 {
+		t.Fatalf("after RemoveDoc, DocCount = %d, want 1", got)
+	}
+}

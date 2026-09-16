@@ -20,14 +20,15 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
-	engMu    sync.Mutex // serialises engine init so IndexFolder waits if startup is mid-init
-	indexMu  sync.Mutex // prevents overlapping folder-indexing jobs
-	embedder *embedder.Model
-	store    *vectorstore.VectorStore
-	indexer  *indexing.Indexer
-	watcher  *indexing.FileWatcher
-	llm      *llm.Model
+	ctx       context.Context
+	engMu     sync.Mutex // serialises engine init so IndexFolder waits if startup is mid-init
+	indexMu   sync.Mutex // prevents overlapping folder-indexing jobs
+	embedder  *embedder.Model
+	engineErr error // last engine init failure; guarded by engMu
+	store     *vectorstore.VectorStore
+	indexer   *indexing.Indexer
+	watcher   *indexing.FileWatcher
+	llm       *llm.Model
 }
 
 // recentWindow bounds which files are treated as "recent" and indexed at high
@@ -78,6 +79,32 @@ func (a *App) context() context.Context {
 	return a.ctx
 }
 
+// EngineStatus is a snapshot of the engine for the frontend. Events report
+// changes; this lets a freshly loaded UI catch up on anything it missed, such as
+// an engine:ready emitted before its listeners were registered.
+type EngineStatus struct {
+	Ready     bool   `json:"ready"`
+	Error     string `json:"error"`
+	Documents int    `json:"documents"`
+	Chunks    int    `json:"chunks"`
+}
+
+// EngineStatus reports whether the embedding engine is running, the last
+// startup error, and the size of the index. It waits for an in-progress init.
+func (a *App) EngineStatus() EngineStatus {
+	a.engMu.Lock()
+	defer a.engMu.Unlock()
+	status := EngineStatus{
+		Ready:     a.embedder != nil,
+		Documents: a.store.DocCount(),
+		Chunks:    a.store.Len(),
+	}
+	if a.engineErr != nil {
+		status.Error = a.engineErr.Error()
+	}
+	return status
+}
+
 // EngineConfig is the payload for initialising the engine.
 // All fields are optional — empty strings fall back to platform defaults.
 type EngineConfig struct {
@@ -92,7 +119,9 @@ func (a *App) InitEngine(cfg EngineConfig) error {
 	return a.initEngineLocked(cfg)
 }
 
-func (a *App) initEngineLocked(cfg EngineConfig) error {
+func (a *App) initEngineLocked(cfg EngineConfig) (err error) {
+	defer func() { a.engineErr = err }()
+
 	// Stop the indexer before tearing down the engine it runs on.
 	if a.indexer != nil {
 		a.indexer.Stop()
