@@ -10,7 +10,7 @@ Spotfile is **cross-platform** — a single Go + Wails codebase builds a native 
 
 | OS | Webview | ONNX Runtime acceleration |
 |----|---------|---------------------------|
-| **macOS** (Apple Silicon & Intel) | WKWebView | CoreML → Metal GPU / Neural Engine |
+| **macOS** (Apple Silicon & Intel) | WKWebView | CPU (all cores) — CoreML EP disabled, see `engine/embedder/provider_darwin.go` |
 | **Windows 10 / 11** (x64) | WebView2 | DirectML → GPU + NPU (incl. Copilot+ PCs) |
 | **Linux** | WebKitGTK | CPU (all cores) |
 

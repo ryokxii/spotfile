@@ -1,32 +1,35 @@
-package engine
+// Package llm is a placeholder for local answer generation over search results.
+package llm
 
 import (
 	"context"
 	"fmt"
 	"strings"
+
+	"spotfile/engine/vectorstore"
 )
 
-// LLMConfig holds configuration for the LLM engine.
-type LLMConfig struct {
-	ModelPath    string // Path to GGUF model file
-	ModelType    string // "llama" or "gemma"
-	ContextSize  int    // Context window size (default 2048)
-	MaxTokens    int    // Max generation tokens (default 512)
-	Temperature  float32
-	TopP         float32
+// Config holds configuration for the LLM engine.
+type Config struct {
+	ModelPath   string // Path to GGUF model file
+	ModelType   string // "llama" or "gemma"
+	ContextSize int    // Context window size (default 2048)
+	MaxTokens   int    // Max generation tokens (default 512)
+	Temperature float32
+	TopP        float32
 }
 
-// LLM provides local inference via a quantized language model.
-type LLM struct {
-	cfg    LLMConfig
+// Model provides local inference via a quantized language model.
+type Model struct {
+	cfg    Config
 	loaded bool
 	// In real implementation, would hold model pointer from llama.go
 	// For now, we have a graceful no-op implementation
 }
 
-// New initializes the LLM with the given config.
+// New initializes the model with the given config.
 // Returns error if model file not found (allows graceful degradation).
-func NewLLM(cfg LLMConfig) (*LLM, error) {
+func New(cfg Config) (*Model, error) {
 	if cfg.ContextSize == 0 {
 		cfg.ContextSize = 2048
 	}
@@ -40,25 +43,25 @@ func NewLLM(cfg LLMConfig) (*LLM, error) {
 		cfg.TopP = 0.9
 	}
 
-	llm := &LLM{cfg: cfg, loaded: false}
+	m := &Model{cfg: cfg, loaded: false}
 
 	// TODO: Load actual GGUF model via llama.go when available
 	// For now, this is a placeholder that allows search to work
 	// LLM generation will return an error asking user to download model
 
-	return llm, nil
+	return m, nil
 }
 
 // Generate creates a response based on system prompt, query, and context.
 // Context is formatted search results; query is user's question.
 // Returns error if model not loaded with helpful message.
-func (l *LLM) Generate(ctx context.Context, systemPrompt, query, context string) (string, error) {
+func (l *Model) Generate(ctx context.Context, systemPrompt, query, context string) (string, error) {
 	if !l.loaded {
 		return "", fmt.Errorf(
-			"LLM model not loaded. To enable generative search:\n" +
-				"1. Download a quantized model (Llama 3.2 3B or Gemma 3 4B in GGUF format)\n" +
-				"2. Place it at: %s\n" +
-				"3. Restart the app\n" +
+			"LLM model not loaded. To enable generative search:\n"+
+				"1. Download a quantized model (Llama 3.2 3B or Gemma 3 4B in GGUF format)\n"+
+				"2. Place it at: %s\n"+
+				"3. Restart the app\n"+
 				"For now, semantic search is available without generative answers", l.cfg.ModelPath)
 	}
 
@@ -80,18 +83,18 @@ func (l *LLM) Generate(ctx context.Context, systemPrompt, query, context string)
 }
 
 // Close releases model resources.
-func (l *LLM) Close() error {
+func (l *Model) Close() error {
 	// TODO: Cleanup model resources
 	return nil
 }
 
 // IsLoaded returns whether a model is currently loaded.
-func (l *LLM) IsLoaded() bool {
+func (l *Model) IsLoaded() bool {
 	return l.loaded
 }
 
 // FormatContext formats search results for use as LLM context.
-func FormatContext(results []SearchResult, maxLength int) string {
+func FormatContext(results []vectorstore.SearchResult, maxLength int) string {
 	var sb strings.Builder
 	sb.WriteString("## Relevant Documents\n\n")
 

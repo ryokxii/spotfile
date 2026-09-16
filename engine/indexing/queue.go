@@ -1,9 +1,15 @@
-package engine
+// Package indexing decides what gets indexed and when: a priority queue of
+// file paths, the read → chunk → embed pipeline, and a file watcher that
+// re-queues edited files.
+package indexing
 
 import (
 	"context"
 	"log"
 	"sync"
+
+	"spotfile/engine/embedder"
+	"spotfile/engine/vectorstore"
 )
 
 // Priority orders indexing work. Higher values are drained first, so live edits
@@ -28,13 +34,13 @@ type PathPriority struct {
 	Priority Priority
 }
 
-// IndexHooks are optional callbacks fired on the indexer's worker goroutine.
+// Hooks are optional callbacks fired on the indexer's worker goroutine.
 // OnStart fires once when a job's first path begins processing; OnChunk fires
 // per stored chunk with the job's cumulative chunk count; OnDone fires once when
 // every path in the job has been processed.
-type IndexHooks struct {
+type Hooks struct {
 	OnStart func()
-	OnChunk func(chunk EmbeddedChunk, jobTotalChunks int)
+	OnChunk func(chunk vectorstore.EmbeddedChunk, jobTotalChunks int)
 	OnDone  func(jobTotalChunks int)
 }
 
@@ -48,7 +54,7 @@ type indexJob struct {
 	total     int
 	started   bool
 	onStart   func()
-	onChunk   func(EmbeddedChunk, int)
+	onChunk   func(vectorstore.EmbeddedChunk, int)
 	onDone    func(int)
 }
 
@@ -59,11 +65,11 @@ type task struct {
 
 // Indexer owns a prioritized work queue drained by a single background worker.
 // Batching within a priority tier is preserved by handing each drained batch to
-// Engine.IndexFiles, which parallelizes reads and embedding internally.
+// EmbedFiles, which parallelizes reads and embedding internally.
 type Indexer struct {
 	ctx   context.Context
-	eng   *Engine
-	store *VectorStore
+	model *embedder.Model
+	store *vectorstore.VectorStore
 
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -73,8 +79,8 @@ type Indexer struct {
 }
 
 // NewIndexer starts the background worker. Stop it with Stop.
-func NewIndexer(ctx context.Context, eng *Engine, store *VectorStore) *Indexer {
-	ix := &Indexer{ctx: ctx, eng: eng, store: store}
+func NewIndexer(ctx context.Context, model *embedder.Model, store *vectorstore.VectorStore) *Indexer {
+	ix := &Indexer{ctx: ctx, model: model, store: store}
 	ix.cond = sync.NewCond(&ix.mu)
 	ix.wg.Add(1)
 	go ix.run()
@@ -84,7 +90,7 @@ func NewIndexer(ctx context.Context, eng *Engine, store *VectorStore) *Indexer {
 // Enqueue schedules items as a single job. De-duplication (replacing a path's
 // prior chunks) and persistence happen automatically when the job's paths are
 // processed. A nil or empty items slice is a no-op.
-func (ix *Indexer) Enqueue(items []PathPriority, hooks IndexHooks) {
+func (ix *Indexer) Enqueue(items []PathPriority, hooks Hooks) {
 	if len(items) == 0 {
 		return
 	}
@@ -164,7 +170,7 @@ func (ix *Indexer) process(batch []task) {
 
 	// Replace prior chunks for these paths, then re-index.
 	ix.store.RemoveDocs(paths)
-	chunks := ix.eng.IndexFiles(ix.ctx, paths)
+	chunks := EmbedFiles(ix.ctx, ix.model, paths)
 	for chunk := range chunks {
 		ix.store.Add(chunk)
 		job := jobOf[chunk.DocPath]

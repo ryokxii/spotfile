@@ -1,4 +1,4 @@
-package engine
+package indexing
 
 import (
 	"log"

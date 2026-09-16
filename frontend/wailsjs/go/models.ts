@@ -1,4 +1,27 @@
-export namespace engine {
+export namespace main {
+	
+	export class EngineConfig {
+	    libraryPath: string;
+	    modelPath: string;
+	    vocabPath: string;
+	    workers: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new EngineConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.libraryPath = source["libraryPath"];
+	        this.modelPath = source["modelPath"];
+	        this.vocabPath = source["vocabPath"];
+	        this.workers = source["workers"];
+	    }
+	}
+
+}
+
+export namespace vectorstore {
 	
 	export class SearchResult {
 	    docPath: string;
@@ -18,29 +41,6 @@ export namespace engine {
 	        this.pageNum = source["pageNum"];
 	        this.text = source["text"];
 	        this.score = source["score"];
-	    }
-	}
-
-}
-
-export namespace main {
-	
-	export class EngineConfig {
-	    libraryPath: string;
-	    modelPath: string;
-	    vocabPath: string;
-	    workers: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new EngineConfig(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.libraryPath = source["libraryPath"];
-	        this.modelPath = source["modelPath"];
-	        this.vocabPath = source["vocabPath"];
-	        this.workers = source["workers"];
 	    }
 	}
 

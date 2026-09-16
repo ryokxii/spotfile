@@ -11,20 +11,23 @@ import (
 	"sync"
 	"time"
 
-	"spotfile/engine"
+	"spotfile/engine/embedder"
+	"spotfile/engine/indexing"
+	"spotfile/engine/llm"
+	"spotfile/engine/vectorstore"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
-	ctx     context.Context
-	engMu   sync.Mutex // serialises engine init so IndexFolder waits if startup is mid-init
-	indexMu sync.Mutex // prevents overlapping folder-indexing jobs
-	eng     *engine.Engine
-	store   *engine.VectorStore
-	indexer *engine.Indexer
-	watcher *engine.FileWatcher
-	llm     *engine.LLM
+	ctx      context.Context
+	engMu    sync.Mutex // serialises engine init so IndexFolder waits if startup is mid-init
+	indexMu  sync.Mutex // prevents overlapping folder-indexing jobs
+	embedder *embedder.Model
+	store    *vectorstore.VectorStore
+	indexer  *indexing.Indexer
+	watcher  *indexing.FileWatcher
+	llm      *llm.Model
 }
 
 // recentWindow bounds which files are treated as "recent" and indexed at high
@@ -32,7 +35,7 @@ type App struct {
 const recentWindow = 7 * 24 * time.Hour
 
 func NewApp() *App {
-	return &App{store: new(engine.VectorStore)}
+	return &App{store: new(vectorstore.VectorStore)}
 }
 
 // startup auto-initialises the engine with platform defaults so users
@@ -62,12 +65,12 @@ func (a *App) shutdown(_ context.Context) {
 			fmt.Printf("error closing LLM: %v\n", err)
 		}
 	}
-	if a.eng != nil {
-		a.eng.Close()
+	if a.embedder != nil {
+		a.embedder.Close()
 	}
 	// Tear down the process-global ORT environment once, after the engine
 	// (and its session) is closed.
-	engine.ShutdownRuntime()
+	embedder.ShutdownRuntime()
 }
 
 // EngineConfig is the payload for initialising the engine.
@@ -92,9 +95,9 @@ func (a *App) initEngineLocked(cfg EngineConfig) error {
 		a.indexer.Stop()
 		a.indexer = nil
 	}
-	if a.eng != nil {
-		a.eng.Close()
-		a.eng = nil
+	if a.embedder != nil {
+		a.embedder.Close()
+		a.embedder = nil
 	}
 
 	if cfg.LibraryPath == "" {
@@ -124,7 +127,7 @@ func (a *App) initEngineLocked(cfg EngineConfig) error {
 	}
 
 	var err error
-	a.eng, err = engine.New(engine.Config{
+	a.embedder, err = embedder.New(embedder.Config{
 		LibraryPath: cfg.LibraryPath,
 		ModelPath:   cfg.ModelPath,
 		VocabPath:   cfg.VocabPath,
@@ -139,7 +142,7 @@ func (a *App) initEngineLocked(cfg EngineConfig) error {
 	}
 
 	llmModelPath := filepath.Join(spotfileDir(), "model.gguf")
-	a.llm, _ = engine.NewLLM(engine.LLMConfig{
+	a.llm, _ = llm.New(llm.Config{
 		ModelPath: llmModelPath,
 		ModelType: "llama",
 	})
@@ -157,7 +160,7 @@ func (a *App) initEngineLocked(cfg EngineConfig) error {
 	}
 
 	// Background indexer drains prioritized work on a single worker.
-	a.indexer = engine.NewIndexer(a.ctx, a.eng, a.store)
+	a.indexer = indexing.NewIndexer(a.ctx, a.embedder, a.store)
 
 	return nil
 }

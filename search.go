@@ -6,13 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"spotfile/engine"
+	"spotfile/engine/llm"
+	"spotfile/engine/vectorstore"
 )
 
 // Search embeds query and returns the topK nearest stored chunks.
-func (a *App) Search(query string, topK int) ([]engine.SearchResult, error) {
+func (a *App) Search(query string, topK int) ([]vectorstore.SearchResult, error) {
 	started := time.Now()
-	if a.eng == nil {
+	if a.embedder == nil {
 		log.Printf("search: rejected because engine is not initialized")
 		return nil, fmt.Errorf("engine not initialised — call InitEngine first")
 	}
@@ -27,12 +28,12 @@ func (a *App) Search(query string, topK int) ([]engine.SearchResult, error) {
 	log.Printf("search: started query=%q topK=%d indexedChunks=%d", query, topK, a.store.Len())
 	if a.store.Len() == 0 {
 		log.Printf("search: completed results=0 duration=%s (no indexed chunks)", time.Since(started).Round(time.Millisecond))
-		return []engine.SearchResult{}, nil
+		return []vectorstore.SearchResult{}, nil
 	}
 
 	// Embed the query with the locally loaded BGE ONNX model. No query text or
 	// document content leaves this process.
-	vec, err := a.eng.Embed(a.ctx, query)
+	vec, err := a.embedder.Embed(a.ctx, query)
 	if err != nil {
 		log.Printf("search: embedding failed query=%q duration=%s error=%v", query, time.Since(started).Round(time.Millisecond), err)
 		return nil, fmt.Errorf("embed local search query: %w", err)
@@ -55,7 +56,7 @@ func (a *App) Search(query string, topK int) ([]engine.SearchResult, error) {
 
 // GenerateAnswer searches for relevant chunks and uses LLM to generate an answer.
 func (a *App) GenerateAnswer(query string, topK int) (string, error) {
-	if a.eng == nil {
+	if a.embedder == nil {
 		return "", fmt.Errorf("engine not initialised — call InitEngine first")
 	}
 	if a.llm == nil {
@@ -70,7 +71,7 @@ func (a *App) GenerateAnswer(query string, topK int) (string, error) {
 		return "No relevant documents found to generate an answer from.", nil
 	}
 
-	context := engine.FormatContext(results, 2000)
+	context := llm.FormatContext(results, 2000)
 	systemPrompt := "You are a helpful search assistant. Answer based on the provided documents. If information is not in the documents, say so clearly."
 	answer, err := a.llm.Generate(a.ctx, systemPrompt, query, context)
 	if err != nil {
