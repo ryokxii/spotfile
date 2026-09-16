@@ -3,7 +3,7 @@
   import { fade, fly } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
   import { Search, SelectFolder, IndexFolder } from '../wailsjs/go/main/App.js'
-  import { EventsOn } from '../wailsjs/runtime/runtime.js'
+  import { EventsOn, WindowIsFullscreen, WindowFullscreen, WindowUnfullscreen } from '../wailsjs/runtime/runtime.js'
   import StatusBar from './StatusBar.svelte'
   import PdfViewer from './viewers/PdfViewer.svelte'
   import TextViewer from './viewers/TextViewer.svelte'
@@ -129,6 +129,20 @@
     preview = { ...previewTargetFor(result), activeKey: keyOf(result) }
   }
 
+  // F11 toggles full screen on every platform (macOS also has ⌃⌘F via the Window menu).
+  async function toggleFullscreen() {
+    if (await WindowIsFullscreen()) WindowUnfullscreen()
+    else WindowFullscreen()
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && showPreview) closePreview()
+    else if (e.key === 'F11') {
+      e.preventDefault()
+      toggleFullscreen()
+    }
+  }
+
   function closePreview() {
     preview = null
   }
@@ -139,7 +153,7 @@
 </script>
 
 <!-- ── Root ───────────────────────────────────────────────────── -->
-<svelte:window on:keydown={(e) => e.key === 'Escape' && showPreview && closePreview()} />
+<svelte:window on:keydown={onKeydown} />
 <div class="root" class:split={showPreview}>
   <div class="workspace">
     <div class="column" class:in-results={phase === 'results'}>
