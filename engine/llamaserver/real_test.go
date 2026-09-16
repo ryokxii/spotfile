@@ -12,19 +12,25 @@ import (
 )
 
 // TestRealEmbeddingServer starts the installed llama-server with bge-small and
-// requests one embedding. Skipped when llama.cpp or the model is absent.
+// requests one embedding. Skipped when llama.cpp or the model is absent, unless
+// SPOTFILE_REQUIRE_LLAMA=1 (set in CI), which makes that a failure.
 func TestRealEmbeddingServer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a real llama-server")
 	}
+	// embeddertest cannot be imported here (it depends on this package).
+	unavailable := t.Skipf
+	if os.Getenv("SPOTFILE_REQUIRE_LLAMA") == "1" {
+		unavailable = t.Fatalf
+	}
 	bin, err := Locate()
 	if err != nil {
-		t.Skipf("llama-server not found: %v", err)
+		unavailable("llama-server not found: %v", err)
 	}
 	home, _ := os.UserHomeDir()
 	model := filepath.Join(home, ".spotfile", "models", "bge-small-en-v1.5-f16.gguf")
 	if _, err := os.Stat(model); err != nil {
-		t.Skipf("model missing: %s", model)
+		unavailable("model missing: %s", model)
 	}
 
 	s := New(Config{
