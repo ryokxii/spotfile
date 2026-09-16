@@ -16,8 +16,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Latest patched Go: builds and scans use a toolchain with current security fixes.
-  GO_VERSION: stable
+  # Latest patch of Go 1.26: current security fixes for builds and the vuln scan.
+  # Not "stable": Wails v2.12's binding generator fails on Go 1.27
+  # ("package ... without types"). Raise together with Wails.
+  GO_VERSION: "1.26"
   NODE_VERSION: "20"
   WAILS_VERSION: v2.12.0
   GOVULNCHECK_VERSION: v1.8.0
@@ -36,6 +38,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          check-latest: true
           cache-dependency-path: go.sum
 
       - uses: actions/setup-node@v4
@@ -107,6 +110,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          check-latest: true
           cache-dependency-path: go.sum
 
       - uses: ./.github/actions/setup-llama
@@ -163,6 +167,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          check-latest: true
           cache-dependency-path: go.sum
 
       - uses: ./.github/actions/setup-llama
@@ -203,6 +208,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          check-latest: true
           cache-dependency-path: go.sum
 
       - uses: actions/setup-node@v4
@@ -245,6 +251,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          check-latest: true
           cache-dependency-path: go.sum
 
       - uses: actions/setup-node@v4
