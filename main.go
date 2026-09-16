@@ -5,11 +5,14 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
@@ -42,8 +45,12 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 12, G: 12, B: 15, A: 255},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		// Wails only enables the macOS zoom (green, full screen) button when Mac
+		// options are present, so pass an empty set rather than nil.
+		Mac:        &mac.Options{},
+		Menu:       appMenu(),
+		OnStartup:  app.startup,
+		OnShutdown: app.shutdown,
 		Bind: []interface{}{
 			app,
 		},
@@ -52,4 +59,14 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
+}
+
+// appMenu returns the standard macOS menu bar. The Window menu is where macOS
+// adds "Enter Full Screen" (⌃⌘F), and the Edit menu makes ⌘C/⌘V/⌘A work in
+// text fields. Windows keeps its native title bar without a menu bar.
+func appMenu() *menu.Menu {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	return menu.NewMenuFromItems(menu.AppMenu(), menu.EditMenu(), menu.WindowMenu())
 }
