@@ -1,6 +1,6 @@
 //go:build !darwin && !windows
 
-package engine
+package embedder
 
 import ort "github.com/yalue/onnxruntime_go"
 

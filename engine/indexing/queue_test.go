@@ -1,4 +1,4 @@
-package engine
+package indexing
 
 import (
 	"sync"
@@ -15,9 +15,9 @@ func newTestIndexer() *Indexer {
 
 func TestIndexerDrainsHighestPriorityFirst(t *testing.T) {
 	ix := newTestIndexer()
-	ix.Enqueue([]PathPriority{{Path: "old.md", Priority: PriorityLow}}, IndexHooks{})
-	ix.Enqueue([]PathPriority{{Path: "recent.md", Priority: PriorityHigh}}, IndexHooks{})
-	ix.Enqueue([]PathPriority{{Path: "edited.md", Priority: PriorityUrgent}}, IndexHooks{})
+	ix.Enqueue([]PathPriority{{Path: "old.md", Priority: PriorityLow}}, Hooks{})
+	ix.Enqueue([]PathPriority{{Path: "recent.md", Priority: PriorityHigh}}, Hooks{})
+	ix.Enqueue([]PathPriority{{Path: "edited.md", Priority: PriorityUrgent}}, Hooks{})
 
 	want := []string{"edited.md", "recent.md", "old.md"}
 	for _, w := range want {
@@ -37,7 +37,7 @@ func TestIndexerBatchDrainIsCapped(t *testing.T) {
 	for i := range items {
 		items[i] = PathPriority{Path: "f", Priority: PriorityLow}
 	}
-	ix.Enqueue(items, IndexHooks{})
+	ix.Enqueue(items, Hooks{})
 
 	first, ok := ix.nextBatch()
 	if !ok || len(first) != maxBatchDrain {
@@ -51,8 +51,8 @@ func TestIndexerBatchDrainIsCapped(t *testing.T) {
 
 func TestIndexerEnqueueEmptyIsNoop(t *testing.T) {
 	ix := newTestIndexer()
-	ix.Enqueue(nil, IndexHooks{})
-	ix.Enqueue([]PathPriority{}, IndexHooks{})
+	ix.Enqueue(nil, Hooks{})
+	ix.Enqueue([]PathPriority{}, Hooks{})
 
 	ix.mu.Lock()
 	defer ix.mu.Unlock()

@@ -1,4 +1,4 @@
-package engine
+package embedder
 
 import (
 	"fmt"
@@ -14,7 +14,7 @@ type batchResult struct {
 
 // BatchEmbed tokenizes and embeds multiple texts in a single ONNX inference call.
 // This is ~3-5x faster than embedding texts individually.
-func (e *Engine) BatchEmbed(texts []string) ([][]float32, error) {
+func (e *Model) BatchEmbed(texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
@@ -117,7 +117,7 @@ type batchJob struct {
 
 // BatchEmbedBatches is a convenience method that wraps BatchEmbed for concurrent access.
 // Safe to call from multiple goroutines via a worker pool.
-func (e *Engine) BatchEmbedBatches(jobs <-chan batchJob, wg *sync.WaitGroup) {
+func (e *Model) BatchEmbedBatches(jobs <-chan batchJob, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for job := range jobs {
 		results, err := e.BatchEmbed(job.texts)

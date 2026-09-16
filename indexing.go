@@ -6,7 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"spotfile/engine"
+	"spotfile/engine/indexing"
+	"spotfile/engine/vectorstore"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -37,7 +38,7 @@ func (a *App) indexFolder(dir string) error {
 	// If startup's init goroutine is still running, this blocks until it
 	// finishes. If it failed or hasn't started yet, we init here instead.
 	a.engMu.Lock()
-	if a.eng == nil {
+	if a.embedder == nil {
 		if err := a.initEngineLocked(EngineConfig{}); err != nil {
 			a.engMu.Unlock()
 			return fmt.Errorf("engine init: %w", err)
@@ -74,9 +75,9 @@ func (a *App) indexFolder(dir string) error {
 	// Recent files index at high priority (searchable first); history backfills
 	// in the background. Unreadable paths are dropped here, so count over the
 	// exact set that will be indexed to keep the progress percentage accurate.
-	recent, older := engine.SplitByModTime(paths, recentWindow)
+	recent, older := indexing.SplitByModTime(paths, recentWindow)
 	indexed := append(append([]string{}, recent...), older...)
-	totalChunks, err := engine.CountChunks(a.ctx, indexed)
+	totalChunks, err := indexing.CountChunks(a.ctx, indexed)
 	if err != nil {
 		return fmt.Errorf("count chunks: %w", err)
 	}
@@ -88,16 +89,16 @@ func (a *App) indexFolder(dir string) error {
 	// Start the watcher before enqueuing so edits during the scan queue as urgent.
 	a.restartWatcher(dir)
 
-	items := make([]engine.PathPriority, 0, len(indexed))
+	items := make([]indexing.PathPriority, 0, len(indexed))
 	for _, p := range recent {
-		items = append(items, engine.PathPriority{Path: p, Priority: engine.PriorityHigh})
+		items = append(items, indexing.PathPriority{Path: p, Priority: indexing.PriorityHigh})
 	}
 	for _, p := range older {
-		items = append(items, engine.PathPriority{Path: p, Priority: engine.PriorityLow})
+		items = append(items, indexing.PathPriority{Path: p, Priority: indexing.PriorityLow})
 	}
 
-	a.indexer.Enqueue(items, engine.IndexHooks{
-		OnChunk: func(chunk engine.EmbeddedChunk, jobTotal int) {
+	a.indexer.Enqueue(items, indexing.Hooks{
+		OnChunk: func(chunk vectorstore.EmbeddedChunk, jobTotal int) {
 			wailsruntime.EventsEmit(a.ctx, "index:chunk", map[string]any{
 				"total": jobTotal,
 				"path":  chunk.DocPath,
@@ -120,7 +121,7 @@ func (a *App) restartWatcher(dir string) {
 		_ = a.watcher.Stop()
 		a.watcher = nil
 	}
-	watcher, err := engine.StartWatcher(a.ctx, collectWatchDirs(dir), a.indexer)
+	watcher, err := indexing.StartWatcher(a.ctx, collectWatchDirs(dir), a.indexer)
 	if err != nil {
 		log.Printf("warning: failed to start watcher: %v", err)
 		return
@@ -154,12 +155,12 @@ func (a *App) IndexFiles(paths []string) error {
 		return nil
 	}
 	log.Printf("index: enqueue files=%d", len(paths))
-	items := make([]engine.PathPriority, len(paths))
+	items := make([]indexing.PathPriority, len(paths))
 	for i, p := range paths {
-		items[i] = engine.PathPriority{Path: p, Priority: engine.PriorityHigh}
+		items[i] = indexing.PathPriority{Path: p, Priority: indexing.PriorityHigh}
 	}
-	a.indexer.Enqueue(items, engine.IndexHooks{
-		OnChunk: func(chunk engine.EmbeddedChunk, jobTotal int) {
+	a.indexer.Enqueue(items, indexing.Hooks{
+		OnChunk: func(chunk vectorstore.EmbeddedChunk, jobTotal int) {
 			wailsruntime.EventsEmit(a.ctx, "index:chunk", map[string]any{
 				"total": jobTotal,
 				"path":  chunk.DocPath,
