@@ -17,8 +17,12 @@ const (
 	MaxSeqLen        = 512
 	maxChunkWords    = 400 // leaves headroom for [CLS]/[SEP] plus subword expansion
 	chunkOverlap     = 50
-	defaultBatchSize = 32  // embed 32 chunks per ONNX call
-	maxDocBuffer     = 256 // limit document buffer to prevent memory bloat with 100K+ files
+	defaultBatchSize = 16 // embed 16 chunks per ONNX call
+	// maxConcurrentBatches caps simultaneous BatchEmbed calls during indexing.
+	// Each call holds batch×heads×seq²-sized attention buffers (~0.6 GB at full
+	// length); one call per CPU multiplied that peak by NumCPU (12.7 GB observed).
+	maxConcurrentBatches = 2
+	maxDocBuffer         = 256 // limit document buffer to prevent memory bloat with 100K+ files
 )
 
 // inputNames matches the bge-small-en-v1.5 ONNX export order.
@@ -271,9 +275,9 @@ func (e *Engine) IndexFiles(ctx context.Context, paths []string) <-chan Embedded
 			}
 		}()
 
-		// Stage 3: embed chunks in batches, bounded to Workers goroutines
+		// Stage 3: embed chunks in batches, bounded to maxConcurrentBatches goroutines
 		var embedWg sync.WaitGroup
-		for range e.cfg.Workers {
+		for range min(e.cfg.Workers, maxConcurrentBatches) {
 			embedWg.Add(1)
 			go func() {
 				defer embedWg.Done()

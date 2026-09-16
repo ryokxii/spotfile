@@ -25,20 +25,23 @@ func (e *Engine) BatchEmbed(texts []string) ([][]float32, error) {
 		encodings[i] = e.tok.Encode(text)
 	}
 
-	// Create batch tensors: [batch_size, seq_len]
+	// Pad only to the longest sequence in this batch, not MaxSeqLen. Attention
+	// memory grows with seqLen², so short chunks padded to 512 cost as much as
+	// full ones.
 	batchSize := int64(len(texts))
-	shape := ort.NewShape(batchSize, int64(MaxSeqLen))
+	seqLen := longestSequence(encodings)
+	shape := ort.NewShape(batchSize, int64(seqLen))
 
 	// Flatten all input_ids, attention_masks, and token_type_ids into single arrays
-	flatInputIDs := make([]int64, batchSize*int64(MaxSeqLen))
-	flatAttentionMask := make([]int64, batchSize*int64(MaxSeqLen))
-	flatTokenTypeIDs := make([]int64, batchSize*int64(MaxSeqLen))
+	flatInputIDs := make([]int64, batchSize*int64(seqLen))
+	flatAttentionMask := make([]int64, batchSize*int64(seqLen))
+	flatTokenTypeIDs := make([]int64, batchSize*int64(seqLen))
 
 	for i, enc := range encodings {
-		offset := int64(i) * int64(MaxSeqLen)
-		copy(flatInputIDs[offset:], enc.InputIDs)
-		copy(flatAttentionMask[offset:], enc.AttentionMask)
-		copy(flatTokenTypeIDs[offset:], enc.TokenTypeIDs)
+		offset := i * seqLen
+		copy(flatInputIDs[offset:offset+seqLen], enc.InputIDs[:seqLen])
+		copy(flatAttentionMask[offset:offset+seqLen], enc.AttentionMask[:seqLen])
+		copy(flatTokenTypeIDs[offset:offset+seqLen], enc.TokenTypeIDs[:seqLen])
 	}
 
 	// Create ONNX tensors
@@ -74,21 +77,35 @@ func (e *Engine) BatchEmbed(texts []string) ([][]float32, error) {
 		return nil, fmt.Errorf("unexpected output type %T", outputs[0])
 	}
 	data := hidden.GetData()
-	hiddenSize := len(data) / int(batchSize) / MaxSeqLen
+	hiddenSize := len(data) / int(batchSize) / seqLen
 
 	// Extract and normalize each embedding
 	results := make([][]float32, len(texts))
 	for i := 0; i < len(texts); i++ {
-		// Extract the sequence [MaxSeqLen, hidden_size] for this batch item
-		offset := i * MaxSeqLen * hiddenSize
-		seqData := data[offset : offset+MaxSeqLen*hiddenSize]
+		// Extract the sequence [seqLen, hidden_size] for this batch item
+		offset := i * seqLen * hiddenSize
+		seqData := data[offset : offset+seqLen*hiddenSize]
 
 		// Mean pool using this text's attention mask
-		pooled := meanPool(seqData, encodings[i].AttentionMask, MaxSeqLen, hiddenSize)
+		pooled := meanPool(seqData, encodings[i].AttentionMask, seqLen, hiddenSize)
 		results[i] = l2Normalize(pooled)
 	}
 
 	return results, nil
+}
+
+// longestSequence returns the longest unpadded length in encodings. The
+// tokenizer pads at the tail, so the unpadded length is the mask's 1-count.
+func longestSequence(encodings []Encoding) int {
+	longest := 0
+	for _, enc := range encodings {
+		n := 0
+		for _, m := range enc.AttentionMask {
+			n += int(m)
+		}
+		longest = max(longest, n)
+	}
+	return longest
 }
 
 // batchWorker consumes batches from the jobs channel and processes them.
