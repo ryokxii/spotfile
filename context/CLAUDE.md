@@ -70,6 +70,8 @@ Do not rush to execution.
 Before proposing solutions or generating code, inspect and internalize these if they exist:
 - **`PRODUCT.md`** — target audience, product voice, domain constraints (maintained by `impeccable`).
 - **`context/DESIGN.md`** — the source of truth for design tokens: colour ramps, typography scale, spacing, radii, motion, elevation.
+- **`context/ROADMAP.md`** — what is built, in progress and planned, plus tracked gaps. Check it before planning.
+- **`context/PERFORMANCE.md`** — how indexing, search and inference are made fast and memory-bounded, with measured numbers. Check it before touching the engine.
 - **`.claude-mem/`** — persistent memory; check historical context and prior architectural decisions before asking redundant questions.
 
 ## 2. Core Workflow (Plan → Test → Execute)
@@ -81,6 +83,9 @@ Follow the `superpowers` and `get-shit-done` methodology:
    - **Memory/performance:** changes to indexing or inference keep `TestIndexPeakMemory` within budget; benchmarks use realistic corpora.
    - **Frontend:** `svelte-check` and `npm test` (Vitest) must pass. Put logic in stores and `lib/` pure functions so it is unit-testable; token changes must keep `tokens.test.ts` green. Component and visual-regression tests (the counterparts of Flutter widget/golden tests) are not set up yet.
 3. **Isolate:** one branch per change; if operating via `vibe-kanban`, stay within the assigned branch/worktree.
+4. **Keep the living docs current, in the same branch as the change:**
+   - **`ROADMAP.md`:** tick or add items when a feature, piece or gap lands, starts, or is deferred. Every implementation plan ends with a task that updates it.
+   - **`PERFORMANCE.md`:** update it when a change affects indexing, search, inference, memory or startup (models, batch sizes, concurrency, buffers, process lifecycle). Record measured numbers with the machine they came from, never estimates presented as results. If a change has no performance effect, say so in the PR instead of editing the doc.
 
 ## 3. Frontend & Design Craft (Svelte Adaptation)
 

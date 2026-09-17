@@ -1,154 +1,139 @@
 # Spotfile — Performance Architecture
 
-A deep-dive into every performance strategy powering Spotfile's Go backend, combining insights from both technical briefs.
+How Spotfile keeps indexing, search and inference fast and memory-bounded on
+consumer hardware, and what has been measured.
+
+> Keep this file current in the same branch as any change to indexing, search,
+> inference, memory or startup (see `context/CLAUDE.md` §2). Numbers are
+> measurements with the machine named; anything not yet measured is marked
+> **expected**.
 
 ---
 
-## 1. Parallelism with Goroutines & Worker Pools
+## 1. Inference runs in llama.cpp, out of process
 
-Go is built for high-concurrency workloads. Instead of indexing files sequentially (one-by-one), Spotfile uses a **Worker Pool** pattern:
+Embeddings (and, from App piece 3, chat) run in llama.cpp's `llama-server`, a
+child process managed by `engine/llamaserver`:
 
-- A pool of goroutines listens on a shared channel of file paths
-- Each worker independently handles chunking and embedding for its assigned file
-- All available CPU cores are utilized — critical when converting thousands of document chunks into vectors
+- **One server per role.** Each `llamaserver.Server` owns one process with its own model and flags. The embedder's server starts at launch, so a missing binary or bad model is reported immediately rather than on the first search.
+- **GPU offload.** `-ngl 99` places every layer on the GPU when one exists (Metal on macOS). There is no per-OS execution-provider code to maintain.
+- **Isolation.** Model memory lives in the child. A crash restarts the server instead of taking the app down, and the server never outlives Spotfile.
+- **Lifecycle.** `Config.IdleTimeout` can stop a server with no active leases. The embedder doesn't set it (it serves search and the watcher). The chat server is **expected** to use it to release its RAM when chat is idle.
 
-**Why it matters:** Vectorizing documents is computationally expensive. A single-threaded indexer wastes most of the machine. A worker pool turns all idle cores into throughput.
+**Why it replaced ONNX Runtime** (PR #5, measured on an Apple M2, indexing a 60-page document):
 
-**Phase 2 Implementation:** Worker pool processes batches of 32 chunks per ONNX call instead of 1, reducing context-switching overhead and improving GPU saturation.
-
----
-
-## 2. ONNX Runtime with Go Bindings
-
-The primary inference engine for embedding generation is ONNX Runtime via Go bindings.
-
-- The ONNX Runtime is **thread-safe**, meaning multiple goroutines can each hold a reference to the same ONNX session and call it concurrently without locking
-- Workers pull document chunks from a shared channel and run embeddings in parallel
-- No Python dependency — the entire inference stack runs natively in the Go process
-
-**Hardware Acceleration:** Execution Providers are explicitly enabled at startup:
-- **Metal** (macOS) — offloads math to the Apple GPU/Neural Engine
-- **DirectML / CUDA** (Windows) — offloads to NVIDIA/AMD GPU
-
-This moves the heavy linear algebra off the CPU entirely, freeing cores for I/O and coordination work.
+| Engine | Peak memory (Spotfile + inference) | Indexing speed |
+|---|---|---|
+| ONNX Runtime, CoreML EP | 12.7 GB | — |
+| ONNX Runtime, CPU EP | ~1.6 GB | baseline |
+| llama.cpp `llama-server` (Metal) | **281 MiB** | **~3× faster** |
 
 ---
 
-## 3. Quantized Models for Consumer Hardware
+## 2. Models
 
-To stay fast on everyday hardware, Spotfile uses heavily optimized model variants:
-
-| Model | Use Case | Format | Speedup vs Full Precision |
+| Model | Role | Format | Notes |
 |---|---|---|---|
-| `bge-small-en-v1.5` | File embeddings | int8 quantized (ONNX) | ~4x smaller, significantly faster |
-| Llama 3.2 (3B) or Gemma 3 (4B) | Generative responses | 4-bit Q4_K_M | Runs on CPU/GPU without VRAM pressure |
+| `bge-small-en-v1.5` | Embeddings | f16 GGUF (~65 MB) | 384 dimensions, CLS pooling, 510-token input limit, query instruction prefix on searches |
+| `Qwen3-1.7B` | Chat (App piece 3) | Q4_K_M GGUF (~1.1 GB) | Chosen for speed on 16 GB machines; thinking disabled per request. Throughput and memory not yet measured |
 
-- **int8 quantization** (for the embedding model) halves memory bandwidth requirements and fits easily in L2/L3 cache
-- **Q4_K_M quantization** (for the LLM) compresses weights to ~4 bits per parameter, enabling 3–4B parameter models to run in under 4 GB of RAM
+`embedder.ID` (`bge-small-en-v1.5-f16/cls`) is stored in `store.gob`. Changing
+the model, quantization or pooling changes the ID, which triggers a rebuild
+instead of mixing incompatible vectors.
 
 ---
 
-## 4. Vector Streaming Pipeline (MPSC Channels)
+## 3. Streaming indexing pipeline
 
-Rather than waiting for a full file to be read before embedding begins, Spotfile **pipelines I/O and compute** using Go channels in an MPSC (multi-producer, single-consumer) pattern:
+`engine/indexing/pipeline.go`:
 
 ```
-[File Reader Goroutines] → docs channel → [Chunker] → chunks channel → [Embedding Workers]
+paths ─▶ [reader pool: NumCPU goroutines] ─▶ pages ─▶ [chunker: 1 goroutine] ─▶ chunks ─▶ [batcher: ≤2 concurrent requests] ─▶ out
 ```
 
-- **Stage 1 (Producers):** A set of goroutines reads files in parallel, fed to `docs` channel
-- **Stage 2 (Single Chunker):** Serializes document text into chunks, preserving order
-- **Stage 3 (Consumer Pool):** Embedding workers drain chunks and batch them for ONNX inference
+- **Readers** extract text (PDF pages or whole files) in parallel. The pool is bounded by the CPU count, not one goroutine per file.
+- **The single chunker** keeps chunk order stable per document.
+- **The batcher** sends 16 chunks per `/v1/embeddings` request, with at most `embedder.ParallelRequests` (2) in flight. That matches the server's parallel slots, so extra concurrency would only queue.
+- **Bounded buffers:** the pages and paths channels are capped at 256, chunks at 64 (4 × batch size), output at 64. Memory stays flat on 100K-file libraries.
+- Reading overlaps inference: the next files are parsed while the current batch embeds.
 
-**The benefit:** While the embedding model processes current batch, the next files are already being read and parsed. I/O and compute overlap instead of stacking — minimizing total "wait" time across the entire indexing run.
+### Token-accurate chunking
 
-**Phase 2 Optimization:** 
-- Capped `docs` channel buffer to prevent unbounded memory growth (maxDocBuffer = 256)
-- Dynamically sized `chunks` buffer based on batch size (defaultBatchSize * 4 = 128)
-- This maintains pipeline efficiency while protecting against memory bloat on large (100K+) file collections
-
----
-
-## 5. Vector Batching (Phase 2 — Primary Optimization)
-
-Individual model calls carry fixed overhead (context switching, kernel launches on GPU, session setup). Batching amortizes this cost:
-
-- Workers **accumulate chunks** (16–32 at a time) before submitting to the embedding model
-- The GPU/NPU processes all chunks in a **single pass**, leveraging its parallelism at the hardware level
-- Fewer total model calls = less overhead = higher throughput
-
-**Implementation:**
-- `BatchEmbed(texts []string) ([][]float32, error)` batches tokenization, tensor creation, and ONNX inference
-- Tokenizes all N texts, creates batch tensors [batch_size, seq_len], runs single inference
-- Extracts and L2-normalizes embeddings for each text while maintaining order
-- Expected speedup: **3–5x faster** than individual embeddings
-
-**Rule of thumb:** Batch size of 16–32 is a practical sweet spot — large enough to saturate GPU lanes, small enough to keep latency per batch low.
+Word windows of 250 words with a 40-word overlap keep most prose under the
+model's window. Any window over 510 tokens is halved by words, using
+llama.cpp's own `/tokenize`, until every piece fits. When the old 400-word
+chunker ran on the repo's docs, 7 of 10 chunks exceeded the window and their
+tails were silently dropped. That no longer happens.
 
 ---
 
-## 6. Prioritized "Just-in-Time" Indexing (Phase 2)
+## 4. Prioritized indexing
 
-Users shouldn't have to wait for a full library scan before they can search. Spotfile solves this with a **Priority Queue** in the indexer:
+`engine/indexing/queue.go`: one background worker drains three FIFO levels.
 
-- **Recently modified files** are placed at the front of the queue via `SortPathsByModTime()`
-- The user can search their current work **immediately** after launch
-- Historical files continue scanning in the background as lower-priority work
+| Priority | Source | Effect |
+|---|---|---|
+| Urgent | Watcher: a file just edited | Re-indexed ahead of everything |
+| High | Files modified in the last 7 days | Searchable first after choosing a folder |
+| Low | Older files | Backfilled in the background |
 
-**Implementation:**
-- Uses `os.Stat()` to retrieve `ModTime` for each file
-- Sorts files in descending order (most recent first)
-- Gracefully handles missing/inaccessible files (logs and continues)
-
-This separates *perceived* responsiveness from *actual* indexing completion, making the app feel instant even on large document libraries.
-
----
-
-## 7. Real-Time Sync with Debounced File Watching
-
-Spotfile's "Silent Engine" keeps the index fresh without manual re-runs:
-
-- **`fsnotify`** watches the filesystem for create/modify events and triggers re-indexing automatically (Phase 3)
-- A **~2-second debounce delay** is applied before acting on any event — this prevents CPU spikes when files are being actively written (e.g., autosave loops in editors)
-
-**Result:** The index stays up-to-date in real time with near-zero idle overhead.
+The worker takes at most 256 paths from a level per iteration, so an urgent
+edit waits for at most one batch, not an entire history scan. A job's chunks
+replace any earlier chunks for the same paths (`RemoveDocs`, then add).
 
 ---
 
-## 8. Local LLM Inference via llama.go
+## 5. Watcher debounce
 
-For generative responses (RAG answers), Spotfile runs a local LLM using `llama.go` (Phase 3):
-
-- Provides idiomatic Go bindings for local model inference — no CGO complexity, no server process
-- Integrates naturally with goroutines for handling concurrent user prompts or background tasks
-- Runs **entirely on-device** — no network calls, no data leaving the machine
-
-**Models supported:** Llama 3.2 (3B) and Gemma 3 (4B) at Q4_K_M quantization, balancing answer quality with consumer hardware constraints.
+`fsnotify` events are debounced per file for 2 seconds. An editor's autosave
+loop triggers one re-index after the file settles, not one per write.
 
 ---
 
-## Phase 2 Performance Gains Summary
+## 6. Persistence
 
-| Optimization | Mechanism | Expected Speedup | Status |
+- `store.gob` is gob-encoded and written through a temp file and atomic rename, so a crash never leaves a truncated index.
+- It is written **once per completed indexing job**, not per chunk. Writes snapshot the map under a read lock and encode outside it.
+- It is loaded once at launch. Settings (App piece 2, planned) will add `DiskSize()`, a single `os.Stat` per `EngineStatus` call, and `settings.json`, a small JSON file written only when a preference changes. Neither is **expected** to affect indexing or search.
+
+---
+
+## 7. Search
+
+`VectorStore.Search` is exact nearest-neighbour search. It computes the dot
+product (vectors are L2-normalized, so dot product = cosine) against every
+chunk, then sorts all candidates. The query itself costs one embedding request.
+
+- **Cost:** linear in chunk count, plus an O(n log n) sort. Fine at current library sizes; not measured at scale.
+- **Planned improvement (ROADMAP Gap 7):** a bounded top-k heap removes the full sort; an approximate index is needed for very large libraries.
+
+---
+
+## 8. Measured results
+
+All on an Apple M2 (16 GB) unless noted. CI runs the benchmarks on `macos-latest` and posts results in the job summary.
+
+| What | Test | Result | Budget / note |
 |---|---|---|---|
-| Vector Batching | Batch 32 chunks per ONNX call | 3–5x embedding faster | ✅ Complete |
-| Priority Queue | Sort by mod time (recent first) | Instant search feedback | ✅ Complete |
-| Buffer Tuning | Cap docs (256), adjust chunks (128) | Prevent memory bloat | ✅ Complete |
-| Benchmarking | Test suite for perf validation | Measure improvements | ✅ Complete |
+| Peak memory indexing a 60-page document (Spotfile + llama-server) | `TestIndexPeakMemory` | 281 MiB | Budget 512 MiB; fails CI above it |
+| Embedding throughput, prose corpus (100 files × 450 words) | `BenchmarkEmbedFiles/prose` | 86 chunks/s (283 chunks in 3.27 s) | Server started before timing |
+| Embedding throughput, Markdown + code corpus | `BenchmarkEmbedFiles/markdown` | 48 chunks/s (309 chunks in 6.46 s) | Denser tokens, more splitting |
+| Legacy index rebuild in the real app | manual | 17 files, 819 chunks in 5 s | PR #5 |
+
+Benchmarks use deterministic, realistic prose and Markdown corpora
+(`engine/indexing/bench_test.go`), never synthetic byte sequences.
 
 ---
 
 ## Summary
 
-| Strategy | Mechanism | Primary Benefit | Phase |
-|---|---|---|---|
-| Worker Pool | Goroutines + shared channel | Full CPU core utilization | 1 |
-| ONNX + Go Bindings | Thread-safe inference sessions | Parallel embeddings, no Python | 1 |
-| Hardware Acceleration | Metal / DirectML / CUDA | GPU offloading | 1 |
-| Quantized Models | int8 / Q4_K_M | Speed + low memory on consumer hardware | 1 |
-| MPSC Pipeline | Channels separating I/O, chunking, compute | Overlapping operations | 1 |
-| Vector Batching | 32 chunks per inference | Reduced overhead, GPU saturation | 2 |
-| Priority Queue | Recent files first | Immediate search on launch | 2 |
-| Buffer Tuning | Capped/dynamic channel sizes | Memory safety at scale | 2 |
-| Debounced fsnotify | 2s delay on file events | Real-time sync without CPU spikes | 3 |
-| llama.go | Local 4-bit LLM | Private, offline generative responses | 3 |
+| Strategy | Mechanism | Benefit |
+|---|---|---|
+| Out-of-process llama.cpp | `llama-server` child per role, Metal offload | 281 MiB peak, crash isolation, ~3× faster than ONNX |
+| Streaming pipeline | Bounded reader pool → chunker → batcher | Reading overlaps inference; flat memory |
+| Batching | 16 chunks/request, 2 concurrent | Amortized request overhead, matches server slots |
+| Token-accurate chunking | 250/40 word windows, split by real token count | No silently dropped text |
+| Priority queue | Urgent > recent 7 days > history, 256 per drain | Current work searchable first |
+| Debounced watcher | 2 s per file | Live sync without CPU spikes |
+| Atomic, per-job persistence | temp + rename, once per job | Crash-safe, few writes |
+| Model-ID'd index | `embedder.ID` in `store.gob` | Safe automatic rebuild on model change |
