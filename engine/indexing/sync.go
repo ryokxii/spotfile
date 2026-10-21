@@ -13,6 +13,7 @@ import (
 	"sort"
 	"time"
 
+	"spotfile/engine/pathutil"
 	"spotfile/engine/vectorstore"
 )
 
@@ -111,4 +112,34 @@ func (ix *Indexer) Forget(path string) int {
 		log.Printf("indexer: persist after forgetting %s failed: %v", path, err)
 	}
 	return n
+}
+
+// StampsUnder returns the entries within dir.
+func StampsUnder(all map[string]vectorstore.Stamp, dir string) map[string]vectorstore.Stamp {
+	out := make(map[string]vectorstore.Stamp)
+	for p, s := range all {
+		if pathutil.Within(p, dir) {
+			out[p] = s
+		}
+	}
+	return out
+}
+
+// Outside returns, sorted, the paths that lie within none of dirs.
+func Outside(all map[string]vectorstore.Stamp, dirs []string) []string {
+	var out []string
+	for p := range all {
+		inside := false
+		for _, d := range dirs {
+			if pathutil.Within(p, d) {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

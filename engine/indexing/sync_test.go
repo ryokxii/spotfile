@@ -204,3 +204,23 @@ func TestIndexerForgetUnknownPathWritesNothing(t *testing.T) {
 		t.Fatalf("store written for a no-op: %v", err)
 	}
 }
+
+func TestStampsUnder(t *testing.T) {
+	all := map[string]vectorstore.Stamp{"/n/a.md": at(1, 1), "/n/sub/b.md": at(1, 1), "/n-old/c.md": at(1, 1), "/w/d.md": at(1, 1)}
+	got := StampsUnder(all, "/n")
+	if len(got) != 2 || got["/n/a.md"] != at(1, 1) || got["/n/sub/b.md"] != at(1, 1) {
+		t.Fatalf("StampsUnder = %v", got)
+	}
+	if len(all) != 4 {
+		t.Fatal("input modified")
+	}
+}
+
+func TestOutside(t *testing.T) {
+	all := map[string]vectorstore.Stamp{"/n/a.md": {}, "/w/b.md": {}, "/old/c.md": {}, "/n-old/d.md": {}}
+	got := Outside(all, []string{"/n", "/w"})
+	want := []string{"/n-old/d.md", "/old/c.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Outside = %v, want %v", got, want)
+	}
+}
