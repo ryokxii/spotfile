@@ -9,6 +9,8 @@ export interface EngineStatus {
   error: string
   documents: number
   chunks: number
+  folder: string
+  indexBytes: number
 }
 
 export interface IndexProgress {
@@ -29,6 +31,7 @@ export interface EngineState {
   watching: boolean
   documents: number
   chunks: number
+  indexBytes: number // size of the index file on disk
   folder: string
 }
 
@@ -44,6 +47,7 @@ export type EngineEvent =
   | { type: 'watcher:started' }
   | { type: 'watcher:reindexing'; path: string }
   | { type: 'watcher:done' }
+  | { type: 'index:cleared' }
 
 export const initialEngineState: EngineState = {
   ready: false,
@@ -54,6 +58,7 @@ export const initialEngineState: EngineState = {
   watching: false,
   documents: 0,
   chunks: 0,
+  indexBytes: 0,
   folder: '',
 }
 
@@ -94,6 +99,8 @@ export function reduce(state: EngineState, event: EngineEvent): EngineState {
       return { ...state, ready: true, indexing: null }
     case 'index:error':
       return { ...state, indexing: null, indexError: event.message }
+    case 'index:cleared':
+      return { ...state, documents: 0, chunks: 0, indexBytes: 0, indexError: '' }
     case 'watcher:started':
       return { ...state, ready: true, watching: true }
     case 'watcher:reindexing':
@@ -109,12 +116,15 @@ export interface EngineRuntime {
   status(): Promise<EngineStatus>
   selectFolder(): Promise<string>
   indexFolder(dir: string): Promise<void>
+  clearIndex(): Promise<void>
 }
 
 export interface EngineStore extends Readable<EngineState> {
   start(): Promise<void>
   stop(): void
   chooseFolder(): Promise<void>
+  // Empties the index; resolves to an error message, or '' on success.
+  clearIndex(): Promise<string>
 }
 
 interface ProgressPayload {
@@ -142,7 +152,10 @@ export function createEngineStore(runtime: EngineRuntime): EngineStore {
   }
 
   const listeners: Record<string, (data: unknown) => void> = {
-    'engine:ready': () => dispatch({ type: 'engine:ready' }),
+    'engine:ready': () => {
+      dispatch({ type: 'engine:ready' })
+      void refreshStatus() // startup may have forgotten a saved folder that no longer exists
+    },
     'engine:error': (msg) => dispatch({ type: 'engine:error', message: String(msg) }),
     'index:start': (d) => {
       const p = d as ProgressPayload
@@ -164,6 +177,11 @@ export function createEngineStore(runtime: EngineRuntime): EngineStore {
       dispatch({ type: 'watcher:done' })
       void refreshStatus()
     },
+    'index:cleared': () => {
+      dispatch({ type: 'index:cleared' })
+      void refreshStatus()
+    },
+    'index:changed': () => void refreshStatus(), // files dropped outside an indexing job
   }
 
   return {
@@ -183,6 +201,14 @@ export function createEngineStore(runtime: EngineRuntime): EngineStore {
         await runtime.indexFolder(dir)
       } catch (err) {
         dispatch({ type: 'index:error', message: messageOf(err) })
+      }
+    },
+    async clearIndex() {
+      try {
+        await runtime.clearIndex()
+        return ''
+      } catch (err) {
+        return messageOf(err)
       }
     },
   }

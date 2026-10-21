@@ -12,8 +12,16 @@ describe('reduce', () => {
   })
 
   it('applies a status snapshot', () => {
-    const s = apply({ type: 'status', status: { ready: true, error: '', documents: 17, chunks: 819 } })
-    expect(s).toMatchObject({ ready: true, documents: 17, chunks: 819 })
+    const s = apply({ type: 'status', status: { ready: true, error: '', documents: 17, chunks: 819, folder: '/notes', indexBytes: 4096 } })
+    expect(s).toMatchObject({ ready: true, documents: 17, chunks: 819, folder: '/notes', indexBytes: 4096 })
+  })
+
+  it('index:cleared zeroes the figures and keeps the folder', () => {
+    const s = apply(
+      { type: 'status', status: { ready: true, error: '', documents: 3, chunks: 30, folder: '/notes', indexBytes: 2048 } },
+      { type: 'index:cleared' },
+    )
+    expect(s).toMatchObject({ documents: 0, chunks: 0, indexBytes: 0, folder: '/notes' })
   })
 
   it('engine:ready clears a previous engine error', () => {
@@ -78,9 +86,10 @@ function fakeRuntime(overrides: Partial<EngineRuntime> = {}) {
       handlers.set(event, cb)
       return () => handlers.delete(event)
     },
-    status: vi.fn(async () => ({ ready: true, error: '', documents: 5, chunks: 50 })),
+    status: vi.fn(async () => ({ ready: true, error: '', documents: 5, chunks: 50, folder: '', indexBytes: 0 })),
     selectFolder: vi.fn(async () => '/picked'),
     indexFolder: vi.fn(async () => undefined),
+    clearIndex: vi.fn(async () => undefined),
     ...overrides,
   }
   return { runtime, emit: (event: string, ...data: unknown[]) => handlers.get(event)?.(...data), handlers }
@@ -106,8 +115,8 @@ describe('createEngineStore', () => {
   it('refreshes totals from the backend when indexing finishes', async () => {
     const status = vi
       .fn()
-      .mockResolvedValueOnce({ ready: true, error: '', documents: 0, chunks: 0 })
-      .mockResolvedValueOnce({ ready: true, error: '', documents: 9, chunks: 120 })
+      .mockResolvedValueOnce({ ready: true, error: '', documents: 0, chunks: 0, folder: '', indexBytes: 0 })
+      .mockResolvedValueOnce({ ready: true, error: '', documents: 9, chunks: 120, folder: '', indexBytes: 0 })
     const { runtime, emit } = fakeRuntime({ status })
     const engine = createEngineStore(runtime)
     await engine.start()
@@ -139,5 +148,43 @@ describe('createEngineStore', () => {
     const engine = createEngineStore(runtime)
     await engine.chooseFolder()
     expect(get(engine).indexError).toBe('indexing is already in progress')
+  })
+  it('clearIndex returns an empty message on success and refreshes after index:cleared', async () => {
+    const { runtime, emit } = fakeRuntime()
+    const engine = createEngineStore(runtime)
+    await engine.start()
+    expect(await engine.clearIndex()).toBe('')
+    expect(runtime.clearIndex).toHaveBeenCalledOnce()
+
+    emit('index:cleared')
+    expect(get(engine).documents).toBe(0)
+    await vi.waitFor(() => expect(runtime.status).toHaveBeenCalledTimes(2))
+  })
+
+  it('refreshes status on engine:ready, when the backend may have forgotten a missing folder', async () => {
+    const status = vi
+      .fn()
+      .mockResolvedValueOnce({ ready: false, error: '', documents: 0, chunks: 0, folder: '/gone', indexBytes: 0 })
+      .mockResolvedValueOnce({ ready: true, error: '', documents: 0, chunks: 0, folder: '', indexBytes: 0 })
+    const { runtime, emit } = fakeRuntime({ status })
+    const engine = createEngineStore(runtime)
+    await engine.start()
+    expect(get(engine).folder).toBe('/gone')
+
+    emit('engine:ready')
+    await vi.waitFor(() => expect(get(engine).folder).toBe(''))
+  })
+
+  it('clearIndex returns the backend error message', async () => {
+    const { runtime } = fakeRuntime({ clearIndex: vi.fn(() => Promise.reject('indexing is in progress')) })
+    expect(await createEngineStore(runtime).clearIndex()).toBe('indexing is in progress')
+  })
+
+  it('refreshes status on index:changed, when files were dropped outside an indexing job', async () => {
+    const { runtime, emit } = fakeRuntime()
+    const engine = createEngineStore(runtime)
+    await engine.start()
+    emit('index:changed')
+    await vi.waitFor(() => expect(runtime.status).toHaveBeenCalledTimes(2))
   })
 })
