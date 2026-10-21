@@ -2,12 +2,14 @@
   import { fade } from 'svelte/transition'
   import { duration } from '../../lib/motion'
   import AppearanceSection from './AppearanceSection.svelte'
+  import LibrarySection from './LibrarySection.svelte'
 </script>
 
 <div class="settings-view" in:fade={{ duration: duration('normal') }}>
   <div class="column">
     <h1 class="display">Settings</h1>
     <AppearanceSection />
+    <LibrarySection />
   </div>
 </div>
 
