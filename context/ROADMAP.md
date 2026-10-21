@@ -55,8 +55,12 @@
 - [x] **1. App shell** — sidebar navigation with routes, design tokens, stores for engine/search/theme, restyled Search view (PR #9)
 - [~] **2. Settings** — theme (System / Nocturne / Daylight), reduce motion, one saved indexed folder with the watcher resumed on launch, storage figures, Clear index; saved in `~/.spotfile/settings.json`. Design: `docs/superpowers/specs/2026-09-17-settings-design.md` (PR #10). Plan: `docs/superpowers/plans/2026-09-17-settings.md`. Implementation not started
 - [~] **3. Chat engine** — design in progress. Decided: engine plus a single unsaved chat page; Qwen3-1.7B (Q4_K_M) with thinking disabled; every message searches the index and answers only from your files with numbered citations; follow-ups search the new message blended with the previous one. Pending: streaming approach (proposed: Go streams tokens as Wails events, with Stop)
-- [ ] **4. Chat sessions** — multiple conversations, saved and listed; clearing chat history
-- [ ] **5. Profile**
+- [ ] **4. Chat sessions** — multiple conversations, saved and listed, organised into folders of chats; clearing chat history
+- [~] **5. Dashboard and Profile** — Dashboard becomes the launch page (search bar, index disk usage, files by type, last updated file, recent searches and files, Free up space with Remove from index / Move to Trash); Profile holds the display name; Search is renamed Chat at `/chat`; Settings gains a Privacy section. History in `~/.spotfile/activity.json`. Design: `docs/superpowers/specs/2026-10-21-dashboard-profile-design.md`. Built after Settings; implementation not started
+
+### Future
+
+- [ ] **Account sign-up with opt-in usage metrics** — the app's only online feature; off unless the user chooses to share, with full transparency about what is sent
 
 ---
 
