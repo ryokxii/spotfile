@@ -196,3 +196,101 @@ func TestWithFolderRemoved(t *testing.T) {
 		t.Fatalf("receiver modified: %v", start.Folders)
 	}
 }
+
+func TestDefaultsHaveNoFiles(t *testing.T) {
+	if d := Defaults(); d.Files == nil || len(d.Files) != 0 {
+		t.Fatalf("Defaults().Files = %#v, want an empty list", d.Files)
+	}
+}
+
+func TestOlderFileWithoutFilesLoadsEmptyList(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"folders":["/notes"],"files":null}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Files == nil || len(got.Files) != 0 {
+		t.Fatalf("Files = %#v", got.Files)
+	}
+}
+
+func TestFilesRoundTripAndValidate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	want := Defaults()
+	want.Files = []string{"/a/b.md", "/c/d.json"}
+	if err := Save(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	bad := Defaults()
+	bad.Files = []string{"relative.md"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("Validate accepted a relative file")
+	}
+}
+
+func TestWithFileAdded(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		folders     []string
+		files       []string
+		path        string
+		want        []string
+		wantChanged bool
+	}{
+		{"first file", nil, nil, "/a/b.md", []string{"/a/b.md"}, true},
+		{"another file", nil, []string{"/a/b.md"}, "/c/d.md", []string{"/a/b.md", "/c/d.md"}, true},
+		{"duplicate", nil, []string{"/a/b.md"}, "/a/./b.md", []string{"/a/b.md"}, false},
+		{"inside an indexed folder", []string{"/a"}, nil, "/a/x/b.md", []string{}, false},
+		{"beside an indexed folder", []string{"/a"}, nil, "/ab/b.md", []string{"/ab/b.md"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := Defaults()
+			start.Folders = append([]string{}, tc.folders...)
+			start.Files = append([]string{}, tc.files...)
+			got, changed := start.WithFileAdded(tc.path)
+			if changed != tc.wantChanged || !reflect.DeepEqual(got.Files, tc.want) {
+				t.Fatalf("got %v (changed %v), want %v (%v)", got.Files, changed, tc.want, tc.wantChanged)
+			}
+			if !reflect.DeepEqual(start.Files, append([]string{}, tc.files...)) {
+				t.Fatalf("receiver modified: %v", start.Files)
+			}
+		})
+	}
+}
+
+func TestWithFileRemoved(t *testing.T) {
+	start := Defaults()
+	start.Files = []string{"/a/b.md", "/c/d.md"}
+	got := start.WithFileRemoved("/a/b.md")
+	if !reflect.DeepEqual(got.Files, []string{"/c/d.md"}) || len(start.Files) != 2 {
+		t.Fatalf("got %v, receiver %v", got.Files, start.Files)
+	}
+}
+
+func TestAddingAFolderAbsorbsItsFiles(t *testing.T) {
+	start := Defaults()
+	start.Files = []string{"/notes/a.md", "/work/b.md", "/notes/sub/c.md"}
+	got, _ := start.WithFolderAdded("/notes")
+	if !reflect.DeepEqual(got.Files, []string{"/work/b.md"}) {
+		t.Fatalf("Files = %v", got.Files)
+	}
+	if len(start.Files) != 3 {
+		t.Fatalf("receiver modified: %v", start.Files)
+	}
+}
+
+func TestRoots(t *testing.T) {
+	s := Defaults()
+	s.Folders = []string{"/notes"}
+	s.Files = []string{"/work/b.md"}
+	if got := s.Roots(); !reflect.DeepEqual(got, []string{"/notes", "/work/b.md"}) {
+		t.Fatalf("Roots = %v", got)
+	}
+}

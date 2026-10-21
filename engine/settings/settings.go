@@ -34,6 +34,7 @@ type Settings struct {
 	Theme     string   `json:"theme"`
 	Motion    string   `json:"motion"`
 	Folders   []string `json:"folders"`   // indexed folders, in the order they were added
+	Files     []string `json:"files"`     // individually indexed files outside those folders
 	Name      string   `json:"name"`      // display name; "" when unset
 	History   bool     `json:"history"`   // remember searches and opened files
 	StaleDays int      `json:"staleDays"` // one of StaleDayChoices
@@ -46,6 +47,7 @@ func Defaults() Settings {
 		Theme:     ThemeSystem,
 		Motion:    MotionSystem,
 		Folders:   []string{},
+		Files:     []string{},
 		History:   true,
 		StaleDays: DefaultStaleDays,
 	}
@@ -68,6 +70,11 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("folder %q is not an absolute path", f)
 		}
 	}
+	for _, f := range s.Files {
+		if !filepath.IsAbs(f) {
+			return fmt.Errorf("file %q is not an absolute path", f)
+		}
+	}
 	if utf8.RuneCountInString(s.Name) > MaxNameLength {
 		return fmt.Errorf("name is longer than %d characters", MaxNameLength)
 	}
@@ -88,7 +95,7 @@ func validStaleDays(days int) bool {
 
 // WithFolderAdded returns a copy that also indexes dir, and whether the list
 // changed. A folder inside an indexed one is already covered; a folder that
-// contains indexed ones replaces them.
+// contains indexed folders or listed files replaces them.
 func (s Settings) WithFolderAdded(dir string) (Settings, bool) {
 	dir = filepath.Clean(dir)
 	for _, f := range s.Folders {
@@ -104,7 +111,45 @@ func (s Settings) WithFolderAdded(dir string) (Settings, bool) {
 		}
 	}
 	s.Folders = append(next, dir)
+	s.Files = without(s.Files, func(f string) bool { return pathutil.Within(f, dir) })
 	return s, true
+}
+
+// WithFileAdded returns a copy that also indexes path, and whether the list
+// changed. A file inside an indexed folder, or already listed, is covered.
+func (s Settings) WithFileAdded(path string) (Settings, bool) {
+	path = filepath.Clean(path)
+	for _, root := range s.Roots() {
+		if pathutil.Within(path, root) {
+			s.Files = append([]string{}, s.Files...)
+			return s, false
+		}
+	}
+	s.Files = append(append([]string{}, s.Files...), path)
+	return s, true
+}
+
+// WithFileRemoved returns a copy without path in the file list.
+func (s Settings) WithFileRemoved(path string) Settings {
+	path = filepath.Clean(path)
+	s.Files = without(s.Files, func(f string) bool { return filepath.Clean(f) == path })
+	return s
+}
+
+// Roots are everything indexed: the folders, then the listed files.
+func (s Settings) Roots() []string {
+	return append(append([]string{}, s.Folders...), s.Files...)
+}
+
+// without returns a new slice of the items drop rejects.
+func without(items []string, drop func(string) bool) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if !drop(item) {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // WithFolderRemoved returns a copy without dir.
@@ -149,6 +194,9 @@ func Load(path string) (Settings, error) {
 	s := file.Settings
 	if s.Folders == nil {
 		s.Folders = []string{}
+	}
+	if s.Files == nil {
+		s.Files = []string{}
 	}
 	if len(s.Folders) == 0 && file.Folder != "" {
 		s.Folders = []string{file.Folder}
