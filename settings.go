@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"spotfile/engine/indexing"
+	"spotfile/engine/pathutil"
 	"spotfile/engine/settings"
 	"spotfile/engine/vectorstore"
 
@@ -68,10 +69,10 @@ func (a *App) addFolder(dir string) error {
 	})
 }
 
-// reconcileFolder brings the entries under dir in line with onDisk, the
-// folder's files as just scanned, and returns the files to index: new ones and
-// changed ones. Other folders' entries are untouched.
-func (a *App) reconcileFolder(dir string, onDisk map[string]vectorstore.Stamp) []string {
+// reconcileRoot brings the entries under dir — a folder, or one listed file —
+// in line with onDisk, its files as just scanned, and returns the files to
+// index: new ones and changed ones. Other roots' entries are untouched.
+func (a *App) reconcileRoot(dir string, onDisk map[string]vectorstore.Stamp) []string {
 	plan := indexing.Reconcile(onDisk, indexing.StampsUnder(a.store.Stamps(), dir), a.store.SavedAt())
 	a.store.RemoveDocs(plan.Remove)
 	a.store.AdoptStamps(plan.Adopt)
@@ -92,9 +93,41 @@ func (a *App) persistChanged() {
 	wailsruntime.EventsEmit(a.ctx, "index:changed", nil)
 }
 
-// watchFolders restarts the watcher on every saved folder.
-func (a *App) watchFolders() {
-	a.restartWatcher(a.GetSettings().Folders)
+// watchRoots restarts the watcher on every saved folder and listed file.
+func (a *App) watchRoots() {
+	s := a.GetSettings()
+	a.restartWatcher(s.Folders, s.Files)
+}
+
+// isIndexedPath reports whether a changed file belongs in the index: a
+// supported file inside a saved folder, or a listed file.
+func (a *App) isIndexedPath(path string) bool {
+	if !isIndexable(path) {
+		return false
+	}
+	for _, root := range a.GetSettings().Roots() {
+		if pathutil.Within(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveFile stops indexing a listed file. The file stays on disk.
+// Emits: "index:changed".
+func (a *App) RemoveFile(path string) error {
+	if !a.indexMu.TryLock() {
+		return fmt.Errorf("indexing is in progress")
+	}
+	defer a.indexMu.Unlock()
+	if err := a.updateSettings(func(s settings.Settings) settings.Settings { return s.WithFileRemoved(path) }); err != nil {
+		return err
+	}
+	a.store.RemoveDocs([]string{filepath.Clean(path)})
+	a.persistChanged()
+	a.watchRoots()
+	log.Printf("index: removed file=%q", path)
+	return nil
 }
 
 // RemoveFolder stops indexing dir: its files leave the index and it is no
@@ -110,58 +143,88 @@ func (a *App) RemoveFolder(dir string) error {
 	}
 	n := a.store.RemoveUnder(dir)
 	a.persistChanged()
-	a.watchFolders()
+	a.watchRoots()
 	log.Printf("index: removed folder=%q files=%d", dir, n)
 	return nil
 }
 
-// syncSavedFolders runs once the engine is ready. It brings the loaded index in
-// line with the disk: saved folders that are gone are forgotten with their
-// files, entries outside every saved folder are dropped, each folder's new and
-// changed files are indexed in one job, and the watcher resumes.
-func (a *App) syncSavedFolders() {
-	folders := a.GetSettings().Folders
-	if len(folders) == 0 {
+// syncSavedRoots runs once the engine is ready. It brings the loaded index in
+// line with the disk: saved folders and listed files that are gone are
+// forgotten, entries outside every saved root are dropped, new and changed
+// files are indexed in one job, and the watcher resumes.
+func (a *App) syncSavedRoots() {
+	saved := a.GetSettings()
+	if len(saved.Roots()) == 0 {
 		a.dropMissing() // an index from before folders were saved: keep it, minus missing files
 		return
 	}
 	if !a.indexMu.TryLock() {
 		return // a folder index is starting and will start the watcher itself
 	}
-	var kept []string
-	for _, dir := range folders {
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			kept = append(kept, dir)
-			continue
-		}
-		log.Printf("settings: saved folder %q is gone; forgetting it and its files", dir)
-		if err := a.updateSettings(func(s settings.Settings) settings.Settings { return s.WithFolderRemoved(dir) }); err != nil {
-			log.Printf("settings: %v", err)
-		}
-	}
-	if gone := indexing.Outside(a.store.Stamps(), kept); len(gone) > 0 {
+	folders := a.keepExisting(saved.Folders, true)
+	files := a.keepExisting(saved.Files, false)
+	roots := append(append([]string{}, folders...), files...)
+	if gone := indexing.Outside(a.store.Stamps(), roots); len(gone) > 0 {
 		a.store.RemoveDocs(gone)
 		a.persistChanged()
-		log.Printf("index: dropped %d files outside the saved folders", len(gone))
+		log.Printf("index: dropped %d files outside the saved folders and files", len(gone))
 	}
 	var toIndex []string
-	for _, dir := range kept {
+	for _, dir := range folders {
 		onDisk, err := indexing.Scan(dir, isIndexable)
 		if err != nil {
 			log.Printf("index: catch-up scan of %q failed: %v", dir, err)
 			continue
 		}
-		toIndex = append(toIndex, a.reconcileFolder(dir, onDisk)...)
+		toIndex = append(toIndex, a.reconcileRoot(dir, onDisk)...)
 	}
-	a.watchFolders()
+	for _, file := range files {
+		if info, err := os.Stat(file); err == nil {
+			toIndex = append(toIndex, a.reconcileRoot(file, map[string]vectorstore.Stamp{file: vectorstore.StampOf(info)})...)
+		}
+	}
+	a.watchRoots()
 	if len(toIndex) == 0 {
 		a.indexMu.Unlock()
 		return
 	}
-	if err := a.enqueueIndexJob(singleFolder(kept), toIndex); err != nil {
+	label := ""
+	if len(files) == 0 {
+		label = singleFolder(folders)
+	}
+	if err := a.enqueueIndexJob(label, toIndex); err != nil {
 		a.indexMu.Unlock()
 		wailsruntime.EventsEmit(a.ctx, "index:error", err.Error())
 	}
+}
+
+// keepExisting returns the saved roots still on disk (folders or regular
+// files) and forgets the rest from settings; their entries are dropped as
+// being outside every root.
+func (a *App) keepExisting(roots []string, folders bool) []string {
+	kind := "file"
+	if folders {
+		kind = "folder"
+	}
+	var kept []string
+	for _, root := range roots {
+		info, err := os.Stat(root)
+		if err == nil && ((folders && info.IsDir()) || (!folders && info.Mode().IsRegular())) {
+			kept = append(kept, root)
+			continue
+		}
+		log.Printf("settings: saved %s %q is gone; forgetting it", kind, root)
+		forget := func(s settings.Settings) settings.Settings {
+			if folders {
+				return s.WithFolderRemoved(root)
+			}
+			return s.WithFileRemoved(root)
+		}
+		if err := a.updateSettings(forget); err != nil {
+			log.Printf("settings: %v", err)
+		}
+	}
+	return kept
 }
 
 // singleFolder is the folder's path when there is exactly one, else "".

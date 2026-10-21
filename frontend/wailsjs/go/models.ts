@@ -244,6 +244,7 @@ export namespace main {
 	    documents: number;
 	    chunks: number;
 	    folders: FolderStat[];
+	    files: string[];
 	    indexBytes: number;
 	
 	    static createFrom(source: any = {}) {
@@ -257,6 +258,7 @@ export namespace main {
 	        this.documents = source["documents"];
 	        this.chunks = source["chunks"];
 	        this.folders = this.convertValues(source["folders"], FolderStat);
+	        this.files = source["files"];
 	        this.indexBytes = source["indexBytes"];
 	    }
 	
@@ -287,6 +289,7 @@ export namespace settings {
 	    theme: string;
 	    motion: string;
 	    folders: string[];
+	    files: string[];
 	    name: string;
 	    history: boolean;
 	    staleDays: number;
@@ -300,6 +303,7 @@ export namespace settings {
 	        this.theme = source["theme"];
 	        this.motion = source["motion"];
 	        this.folders = source["folders"];
+	        this.files = source["files"];
 	        this.name = source["name"];
 	        this.history = source["history"];
 	        this.staleDays = source["staleDays"];

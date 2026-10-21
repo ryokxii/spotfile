@@ -118,7 +118,7 @@ func (a *App) MoveToTrash(path string) error {
 		return fmt.Errorf("indexing is in progress")
 	}
 	defer a.indexMu.Unlock()
-	if err := trash.Move(a.trasher, path, a.GetSettings().Folders, a.isIndexed); err != nil {
+	if err := trash.Move(a.trasher, path, a.GetSettings().Roots(), a.isIndexed); err != nil {
 		log.Printf("trash: %v", err)
 		return err
 	}

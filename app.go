@@ -63,7 +63,7 @@ func (a *App) startup(ctx context.Context) {
 			return
 		}
 		wailsruntime.EventsEmit(ctx, "engine:ready", nil)
-		a.syncSavedFolders()
+		a.syncSavedRoots()
 	}()
 }
 
@@ -103,6 +103,7 @@ type EngineStatus struct {
 	Documents  int          `json:"documents"`
 	Chunks     int          `json:"chunks"`
 	Folders    []FolderStat `json:"folders"`    // the saved indexed folders
+	Files      []string     `json:"files"`      // individually indexed files
 	IndexBytes int64        `json:"indexBytes"` // size of the index file on disk
 }
 
@@ -116,6 +117,7 @@ func (a *App) EngineStatus() EngineStatus {
 		Documents:  a.store.DocCount(),
 		Chunks:     a.store.Len(),
 		Folders:    a.folderStats(),
+		Files:      a.GetSettings().Files,
 		IndexBytes: a.store.DiskSize(),
 	}
 	if a.engineErr != nil {
@@ -224,7 +226,7 @@ func (a *App) initEngineLocked(cfg EngineConfig) (err error) {
 	a.indexer = indexing.NewIndexer(a.context(), a.embedder, a.store)
 	// With a saved folder, the startup sync re-indexes it from scratch (the stale
 	// store loaded nothing), so only folderless indexes need the rebuild.
-	if len(stalePaths) > 0 && len(a.GetSettings().Folders) == 0 {
+	if len(stalePaths) > 0 && len(a.GetSettings().Roots()) == 0 {
 		go a.rebuildStaleIndex(stalePaths)
 	}
 
@@ -236,6 +238,15 @@ func (a *App) initEngineLocked(cfg EngineConfig) (err error) {
 func (a *App) SelectFolder() (string, error) {
 	return wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
 		Title: "Choose a folder to index",
+	})
+}
+
+// SelectFiles opens a native picker for one or more supported files and
+// returns their paths, or none if the user cancels.
+func (a *App) SelectFiles() ([]string, error) {
+	return wailsruntime.OpenMultipleFilesDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title:   "Choose files to index",
+		Filters: []wailsruntime.FileFilter{{DisplayName: "Supported files", Pattern: indexablePattern()}},
 	})
 }
 
