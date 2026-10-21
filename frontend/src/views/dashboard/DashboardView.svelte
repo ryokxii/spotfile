@@ -69,7 +69,7 @@
   <div class="content">
     <header class="top">
       <h1 class="display">{greeting(now.getHours(), $profile.name)}</h1>
-      <p class="status" class:active={status.tone === 'active'} class:error={status.tone === 'error'}>{status.text}</p>
+      <p class="status truncate" title={status.text} class:active={status.tone === 'active'} class:error={status.tone === 'error'}>{status.text}</p>
     </header>
 
     <DashboardSearch disabled={!canSearch} {placeholder} on:search={(e) => runSearch(e.detail)} />
@@ -77,7 +77,7 @@
     {#if !hasLibrary}
       <section class="tile empty">
         <p>Choose a folder to index, and your library's figures appear here.</p>
-        <Button variant="primary" on:click={() => push('/settings')}>Choose a folder</Button>
+        <Button variant="primary" on:click={engine.chooseFolder}>Choose a folder</Button>
       </section>
     {:else if !data && $dashboard.phase === 'error'}
       <section class="tile empty">
@@ -152,6 +152,7 @@
   }
 
   .status {
+    max-width: 100%;
     color: var(--color-ink-faint);
     font-size: var(--text-small-size);
   }

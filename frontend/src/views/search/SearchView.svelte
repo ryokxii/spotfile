@@ -51,7 +51,7 @@
       <p class="error" role="alert">{$search.error}</p>
     {:else if $search.phase === 'results'}
       <div class="results">
-        <p class="count">{$search.results.length} result{$search.results.length === 1 ? '' : 's'} for “{$search.query}”</p>
+        <p class="count truncate" title={$search.query}>{$search.results.length} result{$search.results.length === 1 ? '' : 's'} for “{$search.query}”</p>
         {#if $search.results.length > 0}
           <ResultList results={$search.results} selectedKey={$search.preview?.key ?? null} on:open={(e) => search.open(e.detail)} />
         {:else}

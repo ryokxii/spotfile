@@ -42,9 +42,9 @@
   <div class="well">
     <span class="muted">Last update</span>
     {#if data.lastUpdate}
-      <span title={data.lastUpdate.path}>
-        <strong>{filename(data.lastUpdate.path)}</strong>
-        <span class="muted">· {ago(new Date(data.lastUpdate.at), now)}</span>
+      <span class="update" title={data.lastUpdate.path}>
+        <strong class="truncate">{filename(data.lastUpdate.path)}</strong>
+        <span class="muted when">· {ago(new Date(data.lastUpdate.at), now)}</span>
       </span>
     {:else}
       <span class="muted">Nothing updated yet</span>
@@ -116,6 +116,17 @@
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-sm);
     background-color: var(--color-surface-sunken);
+  }
+
+  .update {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-xxs);
+    min-width: 0;
+  }
+
+  .when {
+    flex-shrink: 0;
   }
 
   strong {

@@ -18,7 +18,7 @@
   {:else}
     <ul class="chips">
       {#each searches as s (s.query)}
-        <li><button type="button" class="chip" on:click={() => dispatch('search', s.query)}>{s.query}</button></li>
+        <li class="chip-item"><button type="button" class="chip truncate" title={s.query} on:click={() => dispatch('search', s.query)}>{s.query}</button></li>
       {/each}
     </ul>
   {/if}
@@ -33,7 +33,14 @@
     margin-top: var(--space-sm);
   }
 
+  .chip-item {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .chip {
+    display: block;
+    max-width: 100%;
     padding: var(--space-xxs) var(--space-sm);
     border-radius: 999px;
     border: 1px solid var(--color-hairline);

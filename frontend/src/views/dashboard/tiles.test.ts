@@ -91,6 +91,13 @@ describe('DiskTile', () => {
     expect(target.textContent).toContain('3 min ago')
   })
 
+  it('cuts a long last-updated filename with an ellipsis and keeps the full path in a tooltip', () => {
+    const { target } = mount(DiskTile, { data, now })
+    const name = target.querySelector('.well strong') as HTMLElement
+    expect(name.classList.contains('truncate')).toBe(true)
+    expect(name.closest('[title]')?.getAttribute('title')).toBe('/n/meeting-notes.md')
+  })
+
   it('says so when nothing has been updated yet', () => {
     const { target } = mount(DiskTile, { data: { ...data, lastUpdate: null, types: [] }, now })
     expect(target.textContent).toContain('Nothing updated yet')
@@ -123,6 +130,14 @@ describe('RecentFilesTile', () => {
 })
 
 describe('RecentSearchesTile', () => {
+  it('cuts a long search with an ellipsis and shows it whole in a tooltip', () => {
+    const query = 'a very long search about every grant deadline this year and the next'
+    const { button } = mount(RecentSearchesTile, { searches: [{ query, at: minutesAgo(5) }], history: true })
+    const chip = button(query)
+    expect(chip.classList.contains('truncate')).toBe(true)
+    expect(chip.title).toBe(query)
+  })
+
   it('runs a recent search again', () => {
     const { button, events } = mount(RecentSearchesTile, { searches: [{ query: 'invoice march', at: minutesAgo(5) }], history: true })
     button('invoice march').click()

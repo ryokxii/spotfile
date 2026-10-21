@@ -52,7 +52,7 @@
     <ul class="folders">
       {#each $engine.folders as folder (folder.path)}
         <li class="folder">
-          <span class="path" title={folder.path}>{truncateMiddle(folder.path, PATH_MAX)}</span>
+          <span class="path truncate" title={folder.path}>{truncateMiddle(folder.path, PATH_MAX)}</span>
           <span class="count">{fileCount(folder.files)}</span>
           <Button disabled={indexing} on:click={() => (removing = folder)}>Remove…</Button>
         </li>

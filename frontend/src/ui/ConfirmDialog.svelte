@@ -58,6 +58,7 @@
   }
 
   .title {
+    overflow-wrap: anywhere; /* long file names in titles break instead of overflowing */
     font-size: var(--text-title-size);
     line-height: var(--text-title-line);
     font-weight: var(--text-title-weight);
