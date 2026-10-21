@@ -133,3 +133,10 @@ func (vs *VectorStore) RemoveDocs(paths []string) {
 	}
 	vs.mu.Unlock()
 }
+
+// Clear removes every document.
+func (vs *VectorStore) Clear() {
+	vs.mu.Lock()
+	vs.docs = nil
+	vs.mu.Unlock()
+}

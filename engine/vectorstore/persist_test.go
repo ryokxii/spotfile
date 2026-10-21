@@ -1,6 +1,7 @@
 package vectorstore
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -58,5 +59,60 @@ func TestVectorStoreRemoveDocReplacesChunks(t *testing.T) {
 	store.Add(EmbeddedChunk{DocPath: "a.md", ChunkIdx: 0, Embedding: []float32{1, 0}})
 	if got := store.Len(); got != 2 {
 		t.Fatalf("after re-add, Len = %d, want 2", got)
+	}
+}
+func TestWipeRemovesFileAndEmptiesStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.gob")
+	store := new(VectorStore)
+	store.SetPersistPath(path)
+	store.Add(EmbeddedChunk{DocPath: "a.md", Text: "alpha", Embedding: []float32{1, 0}})
+	if err := store.Persist(); err != nil {
+		t.Fatalf("Persist: %v", err)
+	}
+	if store.DiskSize() == 0 {
+		t.Fatal("DiskSize = 0 after Persist")
+	}
+
+	if err := store.Wipe(); err != nil {
+		t.Fatalf("Wipe: %v", err)
+	}
+	if store.Len() != 0 {
+		t.Fatalf("Len = %d after Wipe", store.Len())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("store file still exists: %v", err)
+	}
+	if store.DiskSize() != 0 {
+		t.Fatalf("DiskSize = %d after Wipe", store.DiskSize())
+	}
+}
+
+func TestWipeWithoutFileSucceeds(t *testing.T) {
+	store := new(VectorStore)
+	store.SetPersistPath(filepath.Join(t.TempDir(), "store.gob"))
+	store.Add(EmbeddedChunk{DocPath: "a.md", Embedding: []float32{1, 0}})
+	if err := store.Wipe(); err != nil {
+		t.Fatalf("Wipe: %v", err)
+	}
+	if store.Len() != 0 {
+		t.Fatalf("Len = %d after Wipe", store.Len())
+	}
+}
+
+func TestWipeEmptiesMemoryWhenFileCannotBeRemoved(t *testing.T) {
+	// A non-empty directory at the store path can't be removed.
+	path := filepath.Join(t.TempDir(), "store.gob")
+	if err := os.MkdirAll(filepath.Join(path, "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := new(VectorStore)
+	store.SetPersistPath(path)
+	store.Add(EmbeddedChunk{DocPath: "a.md", Embedding: []float32{1, 0}})
+
+	if err := store.Wipe(); err == nil {
+		t.Fatal("Wipe returned no error for an unremovable file")
+	}
+	if store.Len() != 0 {
+		t.Fatalf("Len = %d, want memory cleared anyway", store.Len())
 	}
 }

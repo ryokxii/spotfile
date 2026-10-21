@@ -2,7 +2,9 @@ package vectorstore
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -55,6 +57,37 @@ func (vs *VectorStore) Persist() error {
 		return nil
 	}
 	return vs.Save(path)
+}
+
+// Wipe empties the store and deletes its persisted file. The store is emptied
+// even when the file can't be removed.
+func (vs *VectorStore) Wipe() error {
+	vs.Clear()
+	vs.mu.RLock()
+	path := vs.persistPath
+	vs.mu.RUnlock()
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove index file: %w", err)
+	}
+	return nil
+}
+
+// DiskSize is the size in bytes of the persisted file, or 0 when there is none.
+func (vs *VectorStore) DiskSize() int64 {
+	vs.mu.RLock()
+	path := vs.persistPath
+	vs.mu.RUnlock()
+	if path == "" {
+		return 0
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0
+	}
+	return info.Size()
 }
 
 // Save gob-encodes the store to path via a temp file + atomic rename, so a
