@@ -98,7 +98,10 @@
   on:confirm={remove}
   on:cancel={() => (removing = null)}
 >
-  <p>Its {fileCount(removing?.files ?? 0)} leave the index. The files stay on disk, and you can add the folder again later.</p>
+  <p>
+    {(removing?.files ?? 0) === 1 ? 'Its 1 file leaves' : `Its ${fileCount(removing?.files ?? 0)} leave`} the index. The files stay on disk,
+    and you can add the folder again later.
+  </p>
 </ConfirmDialog>
 
 <style>
