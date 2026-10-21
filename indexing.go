@@ -55,15 +55,16 @@ func (a *App) indexFolder(dir string) error {
 	if len(onDisk) == 0 {
 		return fmt.Errorf("no supported text or PDF files found in %s", filepath.Base(dir))
 	}
-	// Only now that the folder has something to index does it replace the old one.
-	if err := a.useFolder(dir); err != nil {
+	// Only a folder with something to index is added. Other folders stay as
+	// they are; within this one, only new and changed files are indexed.
+	if err := a.addFolder(dir); err != nil {
 		return err
 	}
-	paths := keys(onDisk)
-	// Drop entries for files that are no longer in the folder.
-	if gone := notIn(keys(a.store.Stamps()), onDisk); len(gone) > 0 {
-		a.store.RemoveDocs(gone)
-		log.Printf("index: dropped %d files no longer in %q", len(gone), dir)
+	paths := a.reconcileFolder(dir, onDisk)
+	a.watchFolders()
+	if len(paths) == 0 {
+		a.indexMu.Unlock() // nothing new: no job will release it
+		return nil
 	}
 	log.Printf("index: starting folder=%q files=%d", dir, len(paths))
 	return a.enqueueIndexJob(dir, paths)
@@ -71,8 +72,8 @@ func (a *App) indexFolder(dir string) error {
 
 // enqueueIndexJob indexes paths as one progress-reporting job and releases
 // indexMu when it finishes; the caller must hold indexMu. Recent files index at
-// high priority (searchable first); history backfills in the background. A
-// non-empty dir also (re)starts the watcher on it.
+// high priority (searchable first); history backfills in the background. dir
+// names the folder in "index:start" ("" for several).
 // Emits: "index:start", "index:prepared", then the job's "index:chunk" and
 // "index:done".
 func (a *App) enqueueIndexJob(dir string, paths []string) error {
@@ -93,11 +94,6 @@ func (a *App) enqueueIndexJob(dir string, paths []string) error {
 	wailsruntime.EventsEmit(a.ctx, "index:prepared", map[string]any{
 		"totalChunks": totalChunks,
 	})
-
-	// Start the watcher before enqueuing so edits during the scan queue as urgent.
-	if dir != "" {
-		a.restartWatcher(dir)
-	}
 
 	items := make([]indexing.PathPriority, 0, len(indexed))
 	for _, p := range recent {
@@ -153,17 +149,6 @@ func keys(m map[string]vectorstore.Stamp) []string {
 	return out
 }
 
-// notIn returns the paths in all that keep doesn't contain.
-func notIn(all []string, keep map[string]vectorstore.Stamp) []string {
-	var out []string
-	for _, p := range all {
-		if _, ok := keep[p]; !ok {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 // progressHooks emits index:chunk per stored chunk and index:done at the end,
 // then runs onDone.
 func (a *App) progressHooks(onDone func(jobTotal int)) indexing.Hooks {
@@ -181,14 +166,22 @@ func (a *App) progressHooks(onDone func(jobTotal int)) indexing.Hooks {
 	}
 }
 
-// restartWatcher (re)starts the recursive file watcher rooted at dir, wired to
-// the shared indexer so changes re-index at urgent priority.
-func (a *App) restartWatcher(dir string) {
+// restartWatcher (re)starts one recursive file watcher over the given folders,
+// wired to the shared indexer so changes re-index at urgent priority. With no
+// folders it only stops the current watcher.
+func (a *App) restartWatcher(folders []string) {
 	if a.watcher != nil {
 		_ = a.watcher.Stop()
 		a.watcher = nil
 	}
-	watcher, err := indexing.StartWatcher(a.ctx, collectWatchDirs(dir), a.indexer)
+	if len(folders) == 0 {
+		return
+	}
+	var dirs []string
+	for _, f := range folders {
+		dirs = append(dirs, collectWatchDirs(f)...)
+	}
+	watcher, err := indexing.StartWatcher(a.ctx, dirs, a.indexer)
 	if err != nil {
 		log.Printf("warning: failed to start watcher: %v", err)
 		return

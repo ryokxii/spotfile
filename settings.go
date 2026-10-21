@@ -11,6 +11,7 @@ import (
 
 	"spotfile/engine/indexing"
 	"spotfile/engine/settings"
+	"spotfile/engine/vectorstore"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -59,73 +60,116 @@ func (a *App) updateSettings(change func(settings.Settings) settings.Settings) e
 	return nil
 }
 
-// useFolder records dir as the indexed folder. Switching to a different folder
-// empties the index first, so the index only ever covers one folder.
-func (a *App) useFolder(dir string) error {
-	if _, changed := a.GetSettings().WithFolder(dir); !changed {
-		return nil
-	}
-	a.store.Clear()
-	if err := a.store.Persist(); err != nil {
-		return fmt.Errorf("empty the index for the new folder: %w", err)
-	}
+// addFolder records dir as an indexed folder (see settings.WithFolderAdded).
+func (a *App) addFolder(dir string) error {
 	return a.updateSettings(func(s settings.Settings) settings.Settings {
-		next, _ := s.WithFolder(dir)
+		next, _ := s.WithFolderAdded(dir)
 		return next
 	})
 }
 
-// syncSavedFolder runs once the engine is ready. It brings the loaded index in
-// line with the disk: files deleted while Spotfile was closed are dropped, new
-// and changed files are indexed, and the watcher resumes on the saved folder.
-func (a *App) syncSavedFolder() {
-	dir := a.GetSettings().Folder
-	if dir == "" {
-		a.dropMissing()
-		return
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		log.Printf("settings: saved folder %q is gone; forgetting it and its index", dir)
-		forget := func(s settings.Settings) settings.Settings { s.Folder = ""; return s }
-		if err := a.updateSettings(forget); err != nil {
-			log.Printf("settings: %v", err)
-		}
-		a.store.Clear()
-		if err := a.store.Persist(); err != nil {
-			log.Printf("store: %v", err)
-		}
-		wailsruntime.EventsEmit(a.ctx, "index:changed", nil)
-		return
-	}
-	if !a.indexMu.TryLock() {
-		return // a folder index is starting and will start its own watcher
-	}
-	onDisk, err := indexing.Scan(dir, isIndexable)
-	if err != nil {
-		log.Printf("index: catch-up scan of %q failed: %v", dir, err)
-		a.restartWatcher(dir)
-		a.indexMu.Unlock()
-		return
-	}
-	plan := indexing.Reconcile(onDisk, a.store.Stamps(), a.store.SavedAt())
+// reconcileFolder brings the entries under dir in line with onDisk, the
+// folder's files as just scanned, and returns the files to index: new ones and
+// changed ones. Other folders' entries are untouched.
+func (a *App) reconcileFolder(dir string, onDisk map[string]vectorstore.Stamp) []string {
+	plan := indexing.Reconcile(onDisk, indexing.StampsUnder(a.store.Stamps(), dir), a.store.SavedAt())
 	a.store.RemoveDocs(plan.Remove)
 	a.store.AdoptStamps(plan.Adopt)
 	if len(plan.Remove) > 0 || len(plan.Adopt) > 0 {
-		if err := a.store.Persist(); err != nil {
-			log.Printf("store: %v", err)
-		}
-		wailsruntime.EventsEmit(a.ctx, "index:changed", nil)
+		a.persistChanged()
 	}
-	log.Printf("index: catch-up folder=%q index=%d remove=%d", dir, len(plan.Index), len(plan.Remove))
-	a.restartWatcher(dir)
-	if len(plan.Index) == 0 {
+	log.Printf("index: reconcile folder=%q index=%d remove=%d", dir, len(plan.Index), len(plan.Remove))
+	return plan.Index
+}
+
+// persistChanged saves the index after entries changed outside an indexing job
+// and tells the UI to refresh its figures.
+// Emits: "index:changed".
+func (a *App) persistChanged() {
+	if err := a.store.Persist(); err != nil {
+		log.Printf("store: %v", err)
+	}
+	wailsruntime.EventsEmit(a.ctx, "index:changed", nil)
+}
+
+// watchFolders restarts the watcher on every saved folder.
+func (a *App) watchFolders() {
+	a.restartWatcher(a.GetSettings().Folders)
+}
+
+// RemoveFolder stops indexing dir: its files leave the index and it is no
+// longer watched. The files themselves stay on disk.
+// Emits: "index:changed".
+func (a *App) RemoveFolder(dir string) error {
+	if !a.indexMu.TryLock() {
+		return fmt.Errorf("indexing is in progress")
+	}
+	defer a.indexMu.Unlock()
+	if err := a.updateSettings(func(s settings.Settings) settings.Settings { return s.WithFolderRemoved(dir) }); err != nil {
+		return err
+	}
+	n := a.store.RemoveUnder(dir)
+	a.persistChanged()
+	a.watchFolders()
+	log.Printf("index: removed folder=%q files=%d", dir, n)
+	return nil
+}
+
+// syncSavedFolders runs once the engine is ready. It brings the loaded index in
+// line with the disk: saved folders that are gone are forgotten with their
+// files, entries outside every saved folder are dropped, each folder's new and
+// changed files are indexed in one job, and the watcher resumes.
+func (a *App) syncSavedFolders() {
+	folders := a.GetSettings().Folders
+	if len(folders) == 0 {
+		a.dropMissing() // an index from before folders were saved: keep it, minus missing files
+		return
+	}
+	if !a.indexMu.TryLock() {
+		return // a folder index is starting and will start the watcher itself
+	}
+	var kept []string
+	for _, dir := range folders {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			kept = append(kept, dir)
+			continue
+		}
+		log.Printf("settings: saved folder %q is gone; forgetting it and its files", dir)
+		if err := a.updateSettings(func(s settings.Settings) settings.Settings { return s.WithFolderRemoved(dir) }); err != nil {
+			log.Printf("settings: %v", err)
+		}
+	}
+	if gone := indexing.Outside(a.store.Stamps(), kept); len(gone) > 0 {
+		a.store.RemoveDocs(gone)
+		a.persistChanged()
+		log.Printf("index: dropped %d files outside the saved folders", len(gone))
+	}
+	var toIndex []string
+	for _, dir := range kept {
+		onDisk, err := indexing.Scan(dir, isIndexable)
+		if err != nil {
+			log.Printf("index: catch-up scan of %q failed: %v", dir, err)
+			continue
+		}
+		toIndex = append(toIndex, a.reconcileFolder(dir, onDisk)...)
+	}
+	a.watchFolders()
+	if len(toIndex) == 0 {
 		a.indexMu.Unlock()
 		return
 	}
-	if err := a.enqueueIndexJob(dir, plan.Index); err != nil {
+	if err := a.enqueueIndexJob(singleFolder(kept), toIndex); err != nil {
 		a.indexMu.Unlock()
 		wailsruntime.EventsEmit(a.ctx, "index:error", err.Error())
 	}
+}
+
+// singleFolder is the folder's path when there is exactly one, else "".
+func singleFolder(folders []string) string {
+	if len(folders) == 1 {
+		return folders[0]
+	}
+	return ""
 }
 
 // dropMissing removes entries whose files no longer exist. Used when no folder
@@ -144,7 +188,7 @@ func (a *App) dropMissing() {
 }
 
 // ClearIndex empties the search index and deletes its file. Models, the saved
-// folder and the watcher are left alone.
+// folders and the watcher are left alone.
 // Emits: "index:cleared".
 func (a *App) ClearIndex() error {
 	if !a.indexMu.TryLock() {

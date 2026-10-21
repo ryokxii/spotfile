@@ -34,6 +34,10 @@ export function ReadFileAsBase64(arg1) {
   return window['go']['main']['App']['ReadFileAsBase64'](arg1);
 }
 
+export function RemoveFolder(arg1) {
+  return window['go']['main']['App']['RemoveFolder'](arg1);
+}
+
 export function Search(arg1, arg2) {
   return window['go']['main']['App']['Search'](arg1, arg2);
 }

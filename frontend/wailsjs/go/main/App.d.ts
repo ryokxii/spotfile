@@ -20,6 +20,8 @@ export function InitEngine(arg1:main.EngineConfig):Promise<void>;
 
 export function ReadFileAsBase64(arg1:string):Promise<string>;
 
+export function RemoveFolder(arg1:string):Promise<void>;
+
 export function Search(arg1:string,arg2:number):Promise<Array<vectorstore.SearchResult>>;
 
 export function SelectFolder():Promise<string>;
