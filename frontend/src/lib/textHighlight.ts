@@ -160,8 +160,9 @@ function ensureHighlightStyle(): void {
   const style = document.createElement('style')
   style.id = HIGHLIGHT_STYLE_ID
   style.textContent =
-    `::highlight(${HIGHLIGHT_NAME}) { background: var(--color-primary-wash-strong); color: var(--color-ink); }` +
-    `mark.${FALLBACK_MARK_CLASS} { background: var(--color-primary-wash-strong); color: var(--color-ink); border-radius: var(--radius-xs); }`
+    // Background only, so highlighted JSON/YAML keeps its syntax colours.
+    `::highlight(${HIGHLIGHT_NAME}) { background: var(--color-primary-wash-strong); }` +
+    `mark.${FALLBACK_MARK_CLASS} { background: var(--color-primary-wash-strong); color: inherit; border-radius: var(--radius-xs); }`
   document.head.appendChild(style)
 }
 
