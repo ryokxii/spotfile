@@ -32,7 +32,7 @@
         <span class="meta">~{formatBytes(file.bytes)} · {age(new Date(file.modified), now)}</span>
         <span class="actions">
           <button type="button" class="remove" disabled={busy} on:click={() => dispatch('remove', file.path)}>Remove from index</button>
-          <button type="button" class="trash" disabled={busy} on:click={() => (confirming = file)}>Trash…</button>
+          <button type="button" class="trash" disabled={busy} on:click={() => (confirming = file)}>Delete</button>
         </span>
       </div>
       {#if errors[file.path]}
