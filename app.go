@@ -14,6 +14,7 @@ import (
 	"spotfile/engine/indexing"
 	"spotfile/engine/llamaserver"
 	"spotfile/engine/llm"
+	"spotfile/engine/settings"
 	"spotfile/engine/vectorstore"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -29,6 +30,9 @@ type App struct {
 	indexer   *indexing.Indexer
 	watcher   *indexing.FileWatcher
 	llm       *llm.Model
+
+	settingsMu sync.Mutex // guards settings; may be taken while holding engMu, never the reverse
+	settings   settings.Settings
 }
 
 // recentWindow bounds which files are treated as "recent" and indexed at high
@@ -36,19 +40,23 @@ type App struct {
 const recentWindow = 7 * 24 * time.Hour
 
 func NewApp() *App {
-	return &App{store: new(vectorstore.VectorStore)}
+	store := new(vectorstore.VectorStore)
+	store.SetPersistPath(storePath())
+	return &App{store: store, settings: settings.Defaults()}
 }
 
-// startup auto-initialises the engine with platform defaults so users
-// don't have to configure anything before indexing.
+// startup loads settings, then auto-initialises the engine with platform
+// defaults so users don't have to configure anything before indexing.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.loadSettings()
 	go func() {
 		if err := a.InitEngine(EngineConfig{}); err != nil {
 			wailsruntime.EventsEmit(ctx, "engine:error", err.Error())
 			return
 		}
 		wailsruntime.EventsEmit(ctx, "engine:ready", nil)
+		a.syncSavedFolder()
 	}()
 }
 
@@ -83,10 +91,12 @@ func (a *App) context() context.Context {
 // changes; this lets a freshly loaded UI catch up on anything it missed, such as
 // an engine:ready emitted before its listeners were registered.
 type EngineStatus struct {
-	Ready     bool   `json:"ready"`
-	Error     string `json:"error"`
-	Documents int    `json:"documents"`
-	Chunks    int    `json:"chunks"`
+	Ready      bool   `json:"ready"`
+	Error      string `json:"error"`
+	Documents  int    `json:"documents"`
+	Chunks     int    `json:"chunks"`
+	Folder     string `json:"folder"`     // the saved indexed folder
+	IndexBytes int64  `json:"indexBytes"` // size of the index file on disk
 }
 
 // EngineStatus reports whether the embedding engine is running, the last
@@ -95,9 +105,11 @@ func (a *App) EngineStatus() EngineStatus {
 	a.engMu.Lock()
 	defer a.engMu.Unlock()
 	status := EngineStatus{
-		Ready:     a.embedder != nil,
-		Documents: a.store.DocCount(),
-		Chunks:    a.store.Len(),
+		Ready:      a.embedder != nil,
+		Documents:  a.store.DocCount(),
+		Chunks:     a.store.Len(),
+		Folder:     a.GetSettings().Folder,
+		IndexBytes: a.store.DiskSize(),
 	}
 	if a.engineErr != nil {
 		status.Error = a.engineErr.Error()
@@ -186,7 +198,9 @@ func (a *App) initEngineLocked(cfg EngineConfig) (err error) {
 
 	// Background indexer drains prioritized work on a single worker.
 	a.indexer = indexing.NewIndexer(a.context(), a.embedder, a.store)
-	if len(stalePaths) > 0 {
+	// With a saved folder, the startup sync re-indexes it from scratch (the stale
+	// store loaded nothing), so only folderless indexes need the rebuild.
+	if len(stalePaths) > 0 && a.GetSettings().Folder == "" {
 		go a.rebuildStaleIndex(stalePaths)
 	}
 
