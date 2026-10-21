@@ -1,11 +1,11 @@
 <script lang="ts">
   // App shell: sidebar navigation + routed view. Owns app-wide lifecycles
-  // (engine events, OS theme) so they outlive any single view.
+  // (engine events, theme and motion preferences) so they outlive any single view.
   import { onDestroy, onMount } from 'svelte'
   import Router from 'svelte-spa-router'
   import { WindowFullscreen, WindowIsFullscreen, WindowUnfullscreen } from '../wailsjs/runtime/runtime.js'
   import { destinations, routes } from './routes'
-  import { engine, search, theme } from './stores/app'
+  import { engine, motion, search, theme } from './stores/app'
   import Sidebar from './ui/Sidebar.svelte'
 
   // DESIGN.md §7: full sidebar at ≥1180px, icon rail below. While a preview is
@@ -17,6 +17,7 @@
   $: compact = width < RAIL_BELOW || ($search.preview !== null && width < RAIL_WITH_PREVIEW_BELOW)
 
   const stopTheme = theme.subscribe(() => {})
+  const stopMotion = motion.subscribe(() => {})
 
   onMount(() => {
     void engine.start()
@@ -25,6 +26,7 @@
   onDestroy(() => {
     engine.stop()
     stopTheme()
+    stopMotion()
   })
 
   // F11 toggles full screen on every platform (macOS also has ⌃⌘F via the Window menu).
