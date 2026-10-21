@@ -2,8 +2,11 @@ package indexing
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -83,8 +86,9 @@ func (fw *FileWatcher) eventLoop() {
 
 // handleEvent processes a filesystem event with debouncing.
 func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
-	// Only care about write and create events
-	if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+	// Writes and creates re-index; removes and renames may drop the path. Which
+	// one is decided when the debounce fires, from what is on disk by then.
+	if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) == 0 {
 		return
 	}
 
@@ -98,11 +102,50 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 
 	// Set new debounce timer
 	fw.debounceMap[event.Name] = time.AfterFunc(fw.debounceTime, func() {
-		fw.reindexPath(event.Name)
+		fw.settle(event.Name)
 		fw.mu.Lock()
 		delete(fw.debounceMap, event.Name)
 		fw.mu.Unlock()
 	})
+}
+
+// watchAction is what a settled filesystem change means for the index.
+type watchAction int
+
+const (
+	actIgnore  watchAction = iota // a directory, or a path that can't be read
+	actReindex                    // a regular file: index its current version
+	actForget                     // gone: drop it, and everything under it if it was a folder
+)
+
+// actionFor decides what to do with a path once its events have settled.
+func actionFor(path string) watchAction {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return actForget
+	case err != nil:
+		return actIgnore
+	case info.Mode().IsRegular():
+		return actReindex
+	default:
+		return actIgnore
+	}
+}
+
+// settle applies a path's change after the debounce. Editors that save by
+// replacing the file end here with the new file in place, so a remove followed
+// by a create is a plain re-index.
+func (fw *FileWatcher) settle(path string) {
+	switch actionFor(path) {
+	case actReindex:
+		fw.reindexPath(path)
+	case actForget:
+		if n := fw.indexer.Forget(path); n > 0 {
+			log.Printf("watcher: %s is gone; removed %d files from the index", path, n)
+			wailsruntime.EventsEmit(fw.ctx, "index:changed", nil)
+		}
+	}
 }
 
 // reindexPath enqueues a changed file at urgent priority so it jumps ahead of any
