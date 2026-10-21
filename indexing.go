@@ -150,10 +150,12 @@ func keys(m map[string]vectorstore.Stamp) []string {
 }
 
 // progressHooks emits index:chunk per stored chunk and index:done at the end,
-// then runs onDone.
+// records the job's last file as the latest update, then runs onDone.
 func (a *App) progressHooks(onDone func(jobTotal int)) indexing.Hooks {
+	var last string // hooks run one at a time on the indexer's worker
 	return indexing.Hooks{
 		OnChunk: func(chunk vectorstore.EmbeddedChunk, jobTotal int) {
+			last = chunk.DocPath
 			wailsruntime.EventsEmit(a.ctx, "index:chunk", map[string]any{
 				"total": jobTotal,
 				"path":  chunk.DocPath,
@@ -161,6 +163,9 @@ func (a *App) progressHooks(onDone func(jobTotal int)) indexing.Hooks {
 		},
 		OnDone: func(jobTotal int) {
 			wailsruntime.EventsEmit(a.ctx, "index:done", jobTotal)
+			if last != "" {
+				a.recordUpdate(last)
+			}
 			onDone(jobTotal)
 		},
 	}
@@ -181,7 +186,7 @@ func (a *App) restartWatcher(folders []string) {
 	for _, f := range folders {
 		dirs = append(dirs, collectWatchDirs(f)...)
 	}
-	watcher, err := indexing.StartWatcher(a.ctx, dirs, a.indexer)
+	watcher, err := indexing.StartWatcher(a.ctx, dirs, a.indexer, a.recordUpdate)
 	if err != nil {
 		log.Printf("warning: failed to start watcher: %v", err)
 		return

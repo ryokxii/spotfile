@@ -24,12 +24,14 @@ type FileWatcher struct {
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	indexer      *Indexer
+	onUpdated    func(path string) // called after a changed file is re-indexed; may be nil
 	closed       chan struct{}
 }
 
 // StartWatcher begins watching for filesystem changes on the given paths. Changed
-// files are re-indexed through the shared indexer at urgent priority.
-func StartWatcher(ctx context.Context, paths []string, indexer *Indexer) (*FileWatcher, error) {
+// files are re-indexed through the shared indexer at urgent priority, and
+// onUpdated (if set) hears about each one.
+func StartWatcher(ctx context.Context, paths []string, indexer *Indexer, onUpdated func(path string)) (*FileWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
@@ -51,6 +53,7 @@ func StartWatcher(ctx context.Context, paths []string, indexer *Indexer) (*FileW
 		ctx:          watchCtx,
 		cancel:       cancel,
 		indexer:      indexer,
+		onUpdated:    onUpdated,
 		closed:       make(chan struct{}),
 	}
 
@@ -161,6 +164,9 @@ func (fw *FileWatcher) reindexPath(path string) {
 			},
 			OnDone: func(chunks int) {
 				log.Printf("watcher: re-indexed %s (%d chunks)", path, chunks)
+				if fw.onUpdated != nil {
+					fw.onUpdated(path)
+				}
 				wailsruntime.EventsEmit(fw.ctx, "watcher:done", nil)
 			},
 		},

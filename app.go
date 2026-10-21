@@ -10,11 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"spotfile/engine/activity"
 	"spotfile/engine/embedder"
 	"spotfile/engine/indexing"
 	"spotfile/engine/llamaserver"
 	"spotfile/engine/llm"
 	"spotfile/engine/settings"
+	"spotfile/engine/trash"
 	"spotfile/engine/vectorstore"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -33,6 +35,10 @@ type App struct {
 
 	settingsMu sync.Mutex // guards settings; may be taken while holding engMu, never the reverse
 	settings   settings.Settings
+
+	activityMu sync.Mutex // guards activity
+	activity   activity.Log
+	trasher    trash.Trasher
 }
 
 // recentWindow bounds which files are treated as "recent" and indexed at high
@@ -42,7 +48,7 @@ const recentWindow = 7 * 24 * time.Hour
 func NewApp() *App {
 	store := new(vectorstore.VectorStore)
 	store.SetPersistPath(storePath())
-	return &App{store: store, settings: settings.Defaults()}
+	return &App{store: store, settings: settings.Defaults(), activity: activity.Empty(), trasher: trash.System{}}
 }
 
 // startup loads settings, then auto-initialises the engine with platform
@@ -50,6 +56,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.loadSettings()
+	a.loadActivity()
 	go func() {
 		if err := a.InitEngine(EngineConfig{}); err != nil {
 			wailsruntime.EventsEmit(ctx, "engine:error", err.Error())
