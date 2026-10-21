@@ -29,8 +29,9 @@ type SearchResult struct {
 type VectorStore struct {
 	mu          sync.RWMutex
 	docs        map[string][]EmbeddedChunk
-	persistPath string // where Persist() writes; empty disables autosave
-	embedder    string // ID of the model that produced the vectors; saved with the store
+	stamps      map[string]Stamp // indexed version of each path, see stamps.go
+	persistPath string           // where Persist() writes; empty disables autosave
+	embedder    string           // ID of the model that produced the vectors; saved with the store
 }
 
 // Add appends a chunk to its document's bucket.
@@ -122,6 +123,7 @@ func dot(a, b []float32) float32 {
 func (vs *VectorStore) RemoveDoc(docPath string) {
 	vs.mu.Lock()
 	delete(vs.docs, docPath)
+	delete(vs.stamps, docPath)
 	vs.mu.Unlock()
 }
 
@@ -130,6 +132,7 @@ func (vs *VectorStore) RemoveDocs(paths []string) {
 	vs.mu.Lock()
 	for _, p := range paths {
 		delete(vs.docs, p)
+		delete(vs.stamps, p)
 	}
 	vs.mu.Unlock()
 }
@@ -138,5 +141,6 @@ func (vs *VectorStore) RemoveDocs(paths []string) {
 func (vs *VectorStore) Clear() {
 	vs.mu.Lock()
 	vs.docs = nil
+	vs.stamps = nil
 	vs.mu.Unlock()
 }

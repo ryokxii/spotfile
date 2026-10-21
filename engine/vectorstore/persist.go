@@ -18,6 +18,7 @@ type storeFile struct {
 	Version  int
 	Embedder string
 	Docs     map[string][]EmbeddedChunk
+	Stamps   map[string]Stamp // absent in files written before stamps; gob leaves it nil
 }
 
 // StaleError reports a store on disk that cannot be used with the current
@@ -101,6 +102,10 @@ func (vs *VectorStore) Save(path string) error {
 		copy(cp, chunks) // decouple slice from concurrent appends; embeddings are never mutated in place
 		snapshot[k] = cp
 	}
+	stamps := make(map[string]Stamp, len(vs.stamps))
+	for k, s := range vs.stamps {
+		stamps[k] = s
+	}
 	vs.mu.RUnlock()
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".store-*.tmp")
@@ -110,7 +115,7 @@ func (vs *VectorStore) Save(path string) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op once the rename succeeds
 
-	file := storeFile{Version: formatVersion, Embedder: embedder, Docs: snapshot}
+	file := storeFile{Version: formatVersion, Embedder: embedder, Docs: snapshot, Stamps: stamps}
 	if err := gob.NewEncoder(tmp).Encode(file); err != nil {
 		tmp.Close()
 		return fmt.Errorf("encode store: %w", err)
@@ -142,6 +147,7 @@ func (vs *VectorStore) Load(path string) error {
 		}
 	}
 	vs.docs = file.Docs
+	vs.stamps = file.Stamps
 	return nil
 }
 
