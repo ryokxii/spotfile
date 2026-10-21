@@ -277,3 +277,14 @@ TDD throughout; 80% coverage on new code.
 - Per-file index sizes are estimates; they won't sum exactly to the `store.gob` size.
 - A file removed from the index comes back on a full re-index of the folder. No exclusion list is kept (intentional for now).
 - Staleness ignores opens in other apps, since macOS doesn't reliably record access times.
+
+## Implementation notes
+
+1. **Shared JSON file helper:** `settings` and the new `activity` both need "load, set aside a bad file, save atomically". That logic moves into `engine/jsonfile`, and `settings` uses it.
+2. **`Stale` and file types live in `engine/library`**, not `engine/activity`: they describe indexed files, not history.
+3. **Profile and privacy preferences get their own store** (`stores/profile.ts`) instead of growing the appearance store, so each store keeps one save call.
+4. **`GetDashboard` returns `Dashboard` without an error.** Nothing in it can fail; a failed IPC call still rejects the promise and the UI shows its error state.
+5. **Five file types** (PDF, Markdown, Text, Code, Data) map onto `--color-identity-0…4`, so the "Other" bucket is never needed.
+6. **Recently opened rows always offer Forget** (a small × on hover), since a missing file is only discovered when the viewer fails.
+7. **Untested in jsdom:** `ViewerPanel` (it mounts pdf.js) and the container views. They are checked in `wails dev` in Task 17.
+8. **Move to Trash was not exercised against the real macOS Trash** during verification, to avoid leaving test files there; its path checks are unit-tested and the `NSFileManager` call is untested on a live system.

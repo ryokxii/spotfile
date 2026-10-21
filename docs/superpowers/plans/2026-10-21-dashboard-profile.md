@@ -51,7 +51,7 @@ Commands (repo root unless noted): `go test ./engine/...`, `cd frontend && npx v
 **Files:**
 - Create: `engine/jsonfile/jsonfile.go`, `engine/jsonfile/jsonfile_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 package jsonfile
@@ -116,12 +116,12 @@ func TestLoadSetsAsideCorruptFile(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `go test ./engine/jsonfile/`
 Expected: FAIL, `undefined: Load`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```go
 // Package jsonfile reads and writes the small JSON files Spotfile keeps in
@@ -196,12 +196,12 @@ func Save(path string, v any) error {
 }
 ```
 
-- [ ] **Step 4: Run to confirm pass**
+- [x] **Step 4: Run to confirm pass**
 
 Run: `go test ./engine/jsonfile/`
 Expected: `ok`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add engine/jsonfile
@@ -215,7 +215,7 @@ git commit -m "feat(jsonfile): shared atomic JSON load and save"
 **Files:**
 - Modify: `engine/settings/settings.go` (replace whole file), `engine/settings/settings_test.go` (replace whole file)
 
-- [ ] **Step 1: Replace the tests**
+- [x] **Step 1: Replace the tests**
 
 ```go
 package settings
@@ -418,12 +418,12 @@ func TestWithFolderRemoved(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `go test ./engine/settings/`
 Expected: FAIL, `s.Name undefined`, `undefined: MaxNameLength`.
 
-- [ ] **Step 3: Replace `settings.go`**
+- [x] **Step 3: Replace `settings.go`**
 
 ```go
 // Package settings stores the user's preferences in a small JSON file.
@@ -596,12 +596,12 @@ func Save(path string, s Settings) error {
 }
 ```
 
-- [ ] **Step 4: Run to confirm pass**
+- [x] **Step 4: Run to confirm pass**
 
 Run: `go test ./engine/settings/ && go build ./...`
 Expected: `ok`, and the app still builds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add engine/settings
@@ -615,7 +615,7 @@ git commit -m "feat(settings): display name, history switch and stale threshold"
 **Files:**
 - Create: `engine/activity/activity.go`, `engine/activity/activity_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 package activity
@@ -744,12 +744,12 @@ func TestLoadMissingOrBadFile(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `go test ./engine/activity/`
 Expected: FAIL, `undefined: Empty`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```go
 // Package activity keeps the Dashboard's short local history: recent
@@ -904,12 +904,12 @@ func Save(path string, l Log) error {
 }
 ```
 
-- [ ] **Step 4: Run to confirm pass**
+- [x] **Step 4: Run to confirm pass**
 
 Run: `go test -race ./engine/activity/`
 Expected: `ok`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add engine/activity
@@ -923,7 +923,7 @@ git commit -m "feat(activity): local history of searches, opened files and updat
 **Files:**
 - Create: `engine/library/library.go`, `engine/library/library_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 package library
@@ -993,12 +993,12 @@ func TestStale(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `go test ./engine/library/`
 Expected: FAIL, `undefined: TypeOf`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```go
 // Package library computes the Dashboard's figures about indexed files: how
@@ -1090,12 +1090,12 @@ func Stale(files []File, lastOpened map[string]time.Time, days int, now time.Tim
 }
 ```
 
-- [ ] **Step 4: Run to confirm pass**
+- [x] **Step 4: Run to confirm pass**
 
 Run: `go test ./engine/library/`
 Expected: `ok`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add engine/library
@@ -1109,7 +1109,7 @@ git commit -m "feat(library): file types and stale files for the Dashboard"
 **Files:**
 - Create: `engine/vectorstore/docstats.go`, `engine/vectorstore/docstats_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package vectorstore
@@ -1133,12 +1133,12 @@ func TestDocStats(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `go test ./engine/vectorstore/ -run DocStats`
 Expected: FAIL, `store.DocStats undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```go
 package vectorstore
@@ -1169,12 +1169,12 @@ func (vs *VectorStore) DocStats() []DocStat {
 }
 ```
 
-- [ ] **Step 4: Run to confirm pass**
+- [x] **Step 4: Run to confirm pass**
 
 Run: `go test ./engine/vectorstore/`
 Expected: `ok`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add engine/vectorstore
@@ -1188,7 +1188,7 @@ git commit -m "feat(vectorstore): per-file chunk counts and index size"
 **Files:**
 - Create: `engine/trash/trash.go`, `engine/trash/trash_darwin.go`, `engine/trash/trash_windows.go`, `engine/trash/trash_other.go`, `engine/trash/trash_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 package trash
@@ -1295,12 +1295,12 @@ func TestMove(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `go test ./engine/trash/`
 Expected: FAIL, `undefined: Allowed`.
 
-- [ ] **Step 3: Implement `trash.go`**
+- [x] **Step 3: Implement `trash.go`**
 
 ```go
 // Package trash moves files to the system Trash (macOS) or Recycle Bin
@@ -1364,7 +1364,7 @@ func Move(t Trasher, path string, folders []string, indexed func(string) bool) e
 }
 ```
 
-- [ ] **Step 4: Implement `trash_darwin.go`**
+- [x] **Step 4: Implement `trash_darwin.go`**
 
 ```go
 //go:build darwin
@@ -1411,7 +1411,7 @@ func (System) Trash(path string) error {
 }
 ```
 
-- [ ] **Step 5: Implement `trash_windows.go`**
+- [x] **Step 5: Implement `trash_windows.go`**
 
 ```go
 //go:build windows
@@ -1470,7 +1470,7 @@ func (System) Trash(path string) error {
 }
 ```
 
-- [ ] **Step 6: Implement `trash_other.go`**
+- [x] **Step 6: Implement `trash_other.go`**
 
 ```go
 //go:build !darwin && !windows
@@ -1483,7 +1483,7 @@ func (System) Trash(string) error {
 }
 ```
 
-- [ ] **Step 7: Run to confirm pass, and cross-compile**
+- [x] **Step 7: Run to confirm pass, and cross-compile**
 
 ```bash
 go test -race ./engine/trash/
@@ -1493,7 +1493,7 @@ GOOS=linux GOARCH=amd64 go vet ./engine/trash/
 
 Expected: `ok`, and both vets print nothing.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add engine/trash
@@ -1507,7 +1507,7 @@ git commit -m "feat(trash): move indexed files to the system Trash, never delete
 **Files:**
 - Modify: `engine/indexing/watcher.go`, `indexing.go`
 
-- [ ] **Step 1: Add the callback**
+- [x] **Step 1: Add the callback**
 
 In `engine/indexing/watcher.go`:
 - Add a field to `FileWatcher` after `indexer *Indexer`: `onUpdated func(path string) // called after a changed file is re-indexed; may be nil`
@@ -1522,12 +1522,12 @@ In `engine/indexing/watcher.go`:
 
 In `indexing.go`'s `restartWatcher`, pass `a.recordUpdate` as the fourth argument. (`recordUpdate` arrives in Task 8; build after Task 8.)
 
-- [ ] **Step 2: Run the indexing tests**
+- [x] **Step 2: Run the indexing tests**
 
 Run: `go test ./engine/indexing/`
 Expected: `ok`.
 
-- [ ] **Step 3: Commit with Task 8** (the app package builds only once `recordUpdate` exists).
+- [x] **Step 3: Commit with Task 8** (the app package builds only once `recordUpdate` exists).
 
 ---
 
@@ -1537,7 +1537,7 @@ Expected: `ok`.
 - Create: `activity.go`
 - Modify: `app.go`, `indexing.go`, `search.go`
 
-- [ ] **Step 1: Create `activity.go`**
+- [x] **Step 1: Create `activity.go`**
 
 ```go
 package main
@@ -1633,7 +1633,7 @@ func (a *App) ClearHistory() error {
 }
 ```
 
-- [ ] **Step 2: Wire `app.go`**
+- [x] **Step 2: Wire `app.go`**
 
 - Add imports `"spotfile/engine/activity"` and `"spotfile/engine/trash"`.
 - Add to the end of `App`:
@@ -1647,7 +1647,7 @@ func (a *App) ClearHistory() error {
 - In `NewApp`, return `&App{store: store, settings: settings.Defaults(), activity: activity.Empty(), trasher: trash.System{}}`.
 - In `startup`, call `a.loadActivity()` right after `a.loadSettings()`.
 
-- [ ] **Step 3: Record searches and index updates**
+- [x] **Step 3: Record searches and index updates**
 
 In `search.go`, in `Search`, directly before the final `return results, nil`, add `a.recordSearch(query)`.
 
@@ -1677,7 +1677,7 @@ func (a *App) progressHooks(onDone func(jobTotal int)) indexing.Hooks {
 }
 ```
 
-- [ ] **Step 4: Build, vet and test**
+- [x] **Step 4: Build, vet and test**
 
 ```bash
 gofmt -l . ; go vet . ./engine/... && go build ./... && go test ./engine/...
@@ -1685,7 +1685,7 @@ gofmt -l . ; go vet . ./engine/... && go build ./... && go test ./engine/...
 
 Expected: nothing from `gofmt`, `ok` for all packages.
 
-- [ ] **Step 5: Commit (Tasks 7 and 8)**
+- [x] **Step 5: Commit (Tasks 7 and 8)**
 
 ```bash
 git add engine/indexing/watcher.go activity.go app.go indexing.go search.go
@@ -1700,7 +1700,7 @@ git commit -m "feat(app): record searches, opened files and index updates"
 - Create: `dashboard.go`
 - Regenerate: `frontend/wailsjs/go/**`
 
-- [ ] **Step 1: Create `dashboard.go`**
+- [x] **Step 1: Create `dashboard.go`**
 
 ```go
 package main
@@ -1854,7 +1854,7 @@ func (a *App) SetPrivacy(history bool, staleDays int) error {
 }
 ```
 
-- [ ] **Step 2: Build, vet, regenerate bindings and test**
+- [x] **Step 2: Build, vet, regenerate bindings and test**
 
 ```bash
 gofmt -l . ; go vet . ./engine/... && go build ./... && wails generate module && chmod 644 frontend/wailsjs/runtime/*
@@ -1864,7 +1864,7 @@ go test ./engine/...
 
 Expected: all eight functions listed; tests `ok`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add dashboard.go frontend/wailsjs
@@ -1878,7 +1878,7 @@ git commit -m "feat(app): Dashboard, Free up space, profile and privacy bindings
 **Files:**
 - Create: `frontend/src/lib/greeting.ts`, `frontend/src/lib/greeting.test.ts`, `frontend/src/lib/time.ts`, `frontend/src/lib/time.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `greeting.test.ts`:
 
@@ -1960,12 +1960,12 @@ describe('age', () => {
 })
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `cd frontend && npx vitest run src/lib/greeting.test.ts src/lib/time.test.ts`
 Expected: FAIL, `Failed to resolve import`.
 
-- [ ] **Step 3: Implement `greeting.ts`**
+- [x] **Step 3: Implement `greeting.ts`**
 
 ```ts
 // The Dashboard greeting and the sidebar initials, from the display name.
@@ -1999,7 +1999,7 @@ export function initials(name: string): string {
 }
 ```
 
-- [ ] **Step 4: Implement `time.ts`**
+- [x] **Step 4: Implement `time.ts`**
 
 ```ts
 // Short human times for the Dashboard: "3 min ago", "yesterday", "14 months".
@@ -2029,12 +2029,12 @@ export function age(since: Date, now: Date): string {
 }
 ```
 
-- [ ] **Step 5: Run to confirm pass**
+- [x] **Step 5: Run to confirm pass**
 
 Run: `cd frontend && npx vitest run src/lib/greeting.test.ts src/lib/time.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/lib/greeting.ts frontend/src/lib/greeting.test.ts frontend/src/lib/time.ts frontend/src/lib/time.test.ts
@@ -2048,7 +2048,7 @@ git commit -m "feat(ui): greeting, initials and relative times"
 **Files:**
 - Create: `frontend/src/stores/profile.ts`, `frontend/src/stores/profile.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 import { get } from 'svelte/store'
@@ -2129,12 +2129,12 @@ describe('createProfileStore', () => {
 })
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `cd frontend && npx vitest run src/stores/profile.test.ts`
 Expected: FAIL, `Failed to resolve import "./profile"`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // Profile and privacy preferences, saved by the Go backend in settings.json:
@@ -2244,12 +2244,12 @@ export function createProfileStore(runtime: ProfileRuntime): ProfileStore {
 }
 ```
 
-- [ ] **Step 4: Run to confirm pass**
+- [x] **Step 4: Run to confirm pass**
 
 Run: `cd frontend && npx vitest run src/stores/profile.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/stores/profile.ts frontend/src/stores/profile.test.ts
@@ -2264,7 +2264,7 @@ git commit -m "feat(ui): profile store for the display name and privacy"
 - Create: `frontend/src/stores/dashboard.ts`, `frontend/src/stores/dashboard.test.ts`
 - Modify: `frontend/src/stores/search.ts`, `frontend/src/stores/search.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `dashboard.test.ts`:
 
@@ -2406,12 +2406,12 @@ Append inside `describe('createSearchStore', ...)` in `search.test.ts`:
   })
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `cd frontend && npx vitest run src/stores/dashboard.test.ts src/stores/search.test.ts`
 Expected: FAIL, `Failed to resolve import "./dashboard"`, and `opened` not called.
 
-- [ ] **Step 3: Implement `dashboard.ts`**
+- [x] **Step 3: Implement `dashboard.ts`**
 
 ```ts
 // The Dashboard's figures and history from the Go backend, reloaded when the
@@ -2548,7 +2548,7 @@ export function createDashboardStore(runtime: DashboardRuntime): DashboardStore 
 }
 ```
 
-- [ ] **Step 4: Add the `opened` hook to `search.ts`**
+- [x] **Step 4: Add the `opened` hook to `search.ts`**
 
 - In `SearchApi`, add after `search(...)`:
 
@@ -2559,12 +2559,12 @@ export function createDashboardStore(runtime: DashboardRuntime): DashboardStore 
 
 - In `open(result)`, add as the first line of the method body: `api.opened?.(result.docPath)`
 
-- [ ] **Step 5: Run to confirm pass**
+- [x] **Step 5: Run to confirm pass**
 
 Run: `cd frontend && npx vitest run src/stores/dashboard.test.ts src/stores/search.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/stores/dashboard.ts frontend/src/stores/dashboard.test.ts frontend/src/stores/search.ts frontend/src/stores/search.test.ts
@@ -2579,7 +2579,7 @@ git commit -m "feat(ui): dashboard store, and recent files from the Chat preview
 - Create: `frontend/src/ui/ProfileButton.svelte`, `frontend/src/ui/ProfileButton.test.ts`, `frontend/src/views/dashboard/DashboardView.svelte` (placeholder replaced in Task 15), `frontend/src/views/profile/ProfileView.svelte` (placeholder replaced in Task 14)
 - Modify: `frontend/src/ui/icons.ts`, `frontend/src/ui/Sidebar.svelte`, `frontend/src/routes.ts`, `frontend/src/App.svelte`, `frontend/src/stores/app.ts`, `frontend/src/main.ts`, `frontend/src/views/Redirect.svelte`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { afterEach, describe, expect, it } from 'vitest'
@@ -2617,12 +2617,12 @@ describe('ProfileButton', () => {
 })
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `cd frontend && npx vitest run src/ui/ProfileButton.test.ts`
 Expected: FAIL, `Failed to resolve import "./ProfileButton.svelte"`.
 
-- [ ] **Step 3: Implement `ProfileButton.svelte`**
+- [x] **Step 3: Implement `ProfileButton.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -2695,7 +2695,7 @@ Expected: FAIL, `Failed to resolve import "./ProfileButton.svelte"`.
 </style>
 ```
 
-- [ ] **Step 4: Icons**
+- [x] **Step 4: Icons**
 
 In `ui/icons.ts`, add `| 'dashboard' | 'chat'` to `IconName` and to `ICONS`:
 
@@ -2704,7 +2704,7 @@ In `ui/icons.ts`, add `| 'dashboard' | 'chat'` to `IconName` and to `ICONS`:
   chat: ['M4.5 4h11A1.5 1.5 0 0 1 17 5.5v7a1.5 1.5 0 0 1-1.5 1.5H10l-3.5 3v-3h-2A1.5 1.5 0 0 1 3 12.5v-7A1.5 1.5 0 0 1 4.5 4Z'],
 ```
 
-- [ ] **Step 5: Sidebar**
+- [x] **Step 5: Sidebar**
 
 In `ui/Sidebar.svelte`:
 - Import `ProfileButton from './ProfileButton.svelte'` and add `export let name = ''`.
@@ -2725,7 +2725,7 @@ In `ui/Sidebar.svelte`:
   }
 ```
 
-- [ ] **Step 6: Placeholder views**
+- [x] **Step 6: Placeholder views**
 
 `views/dashboard/DashboardView.svelte` and `views/profile/ProfileView.svelte` each start as:
 
@@ -2733,7 +2733,7 @@ In `ui/Sidebar.svelte`:
 <h1>Coming in the next task</h1>
 ```
 
-- [ ] **Step 7: Routes**
+- [x] **Step 7: Routes**
 
 Replace `routes.ts` with:
 
@@ -2772,7 +2772,7 @@ export const routes: Record<string, typeof SvelteComponent> = {
 
 In `views/Redirect.svelte`, change the comment to `// Unknown routes land on the Dashboard.`
 
-- [ ] **Step 8: Stores and boot**
+- [x] **Step 8: Stores and boot**
 
 Replace `stores/app.ts` with:
 
@@ -2871,7 +2871,7 @@ In `main.ts`, import `profile` beside `settings` and replace the `settings.load(
 
 In `App.svelte`, change the store import to `import { engine, motion, profile, search, theme } from './stores/app'` and pass the name: `<Sidebar {destinations} {compact} name={$profile.name} />`.
 
-- [ ] **Step 9: Check, test and commit**
+- [x] **Step 9: Check, test and commit**
 
 ```bash
 cd frontend && npm run check && npx vitest run
@@ -2889,7 +2889,7 @@ Expected: 0 errors, all tests pass.
 - Create: `frontend/src/views/profile/NameField.svelte`, `frontend/src/views/profile/NameField.test.ts`
 - Replace: `frontend/src/views/profile/ProfileView.svelte`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 import { tick } from 'svelte'
@@ -2957,12 +2957,12 @@ describe('NameField', () => {
 })
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `cd frontend && npx vitest run src/views/profile/NameField.test.ts`
 Expected: FAIL, `Failed to resolve import "./NameField.svelte"`.
 
-- [ ] **Step 3: Implement `NameField.svelte`**
+- [x] **Step 3: Implement `NameField.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3033,7 +3033,7 @@ Expected: FAIL, `Failed to resolve import "./NameField.svelte"`.
 </style>
 ```
 
-- [ ] **Step 4: Replace `ProfileView.svelte`**
+- [x] **Step 4: Replace `ProfileView.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3115,7 +3115,7 @@ Expected: FAIL, `Failed to resolve import "./NameField.svelte"`.
 </style>
 ```
 
-- [ ] **Step 5: Run, check and commit**
+- [x] **Step 5: Run, check and commit**
 
 ```bash
 cd frontend && npx vitest run src/views/profile && npm run check
@@ -3133,7 +3133,7 @@ Expected: PASS, 0 errors.
 - Create in `frontend/src/views/dashboard/`: `DashboardSearch.svelte`, `DiskTile.svelte`, `RecentFilesTile.svelte`, `RecentSearchesTile.svelte`, `StaleFileList.svelte`, `FreeSpaceTile.svelte`, `StaleFilesDialog.svelte`, `ViewerPanel.svelte`, `tiles.test.ts`
 - Replace: `DashboardView.svelte`
 
-- [ ] **Step 1: Write the failing tests** (`tiles.test.ts`)
+- [x] **Step 1: Write the failing tests** (`tiles.test.ts`)
 
 ```ts
 import { tick } from 'svelte'
@@ -3319,12 +3319,12 @@ describe('FreeSpaceTile', () => {
 })
 ```
 
-- [ ] **Step 2: Run to confirm failure**
+- [x] **Step 2: Run to confirm failure**
 
 Run: `cd frontend && npx vitest run src/views/dashboard/tiles.test.ts`
 Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 
-- [ ] **Step 3: `DashboardSearch.svelte`**
+- [x] **Step 3: `DashboardSearch.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3407,7 +3407,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 4: `DiskTile.svelte`**
+- [x] **Step 4: `DiskTile.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3536,7 +3536,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 5: `RecentFilesTile.svelte`**
+- [x] **Step 5: `RecentFilesTile.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3646,7 +3646,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 6: `RecentSearchesTile.svelte`**
+- [x] **Step 6: `RecentSearchesTile.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3708,7 +3708,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 7: `StaleFileList.svelte`**
+- [x] **Step 7: `StaleFileList.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3848,7 +3848,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 8: `FreeSpaceTile.svelte`**
+- [x] **Step 8: `FreeSpaceTile.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3911,7 +3911,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 9: `StaleFilesDialog.svelte`**
+- [x] **Step 9: `StaleFilesDialog.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -3994,7 +3994,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 10: `ViewerPanel.svelte`**
+- [x] **Step 10: `ViewerPanel.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -4046,7 +4046,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 11: Replace `DashboardView.svelte`**
+- [x] **Step 11: Replace `DashboardView.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -4305,7 +4305,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
 </style>
 ```
 
-- [ ] **Step 12: Run, check and commit**
+- [x] **Step 12: Run, check and commit**
 
 ```bash
 cd frontend && npx vitest run src/views/dashboard && npm run check && npx vitest run
@@ -4323,7 +4323,7 @@ Expected: PASS, 0 errors.
 - Create: `frontend/src/views/settings/PrivacySection.svelte`
 - Modify: `frontend/src/views/settings/SettingsView.svelte`
 
-- [ ] **Step 1: Implement**
+- [x] **Step 1: Implement**
 
 ```svelte
 <script lang="ts">
@@ -4382,7 +4382,7 @@ Expected: PASS, 0 errors.
 
 In `SettingsView.svelte`, import `PrivacySection from './PrivacySection.svelte'` and render `<PrivacySection />` after `<LibrarySection />`.
 
-- [ ] **Step 2: Check and commit**
+- [x] **Step 2: Check and commit**
 
 ```bash
 cd frontend && npm run check && npx vitest run
@@ -4399,13 +4399,13 @@ Expected: 0 errors, all tests pass.
 **Files:**
 - Modify: `context/ROADMAP.md`, `context/PERFORMANCE.md`, `docs/superpowers/specs/2026-10-21-dashboard-profile-design.md`
 
-- [ ] **Step 1: Docs**
+- [x] **Step 1: Docs**
 
 - ROADMAP Phase 6: mark `5. Dashboard and Profile` `[x]` and replace "implementation not started" with `Plan: docs/superpowers/plans/2026-10-21-dashboard-profile.md`.
 - PERFORMANCE §6: add a bullet: `**Dashboard.** GetDashboard walks the index once (DocStats), stats each indexed file for Free up space, and reads the in-memory history; it runs on page load and at most once per 250 ms burst of index or history events. activity.json is rewritten on each search, opened file and index update — a few KB, atomically.`
 - Spec: add `## Implementation notes` listing the seven deviations from the top of this plan.
 
-- [ ] **Step 2: Full automated run**
+- [x] **Step 2: Full automated run**
 
 ```bash
 gofmt -l . ; go vet . ./engine/... && go test -race ./engine/...
@@ -4415,7 +4415,7 @@ cd frontend && npm run check && npx vitest run && npm run build
 
 Expected: `gofmt` prints nothing, all `ok`, 0 type errors, all Vitest tests pass, build succeeds.
 
-- [ ] **Step 3: Manual verification with `wails dev`**
+- [x] **Step 3: Manual verification with `wails dev`**
 
 Back up `~/.spotfile/store.gob` and note whether `settings.json`/`activity.json` exist; restore them afterwards. Use a scratch folder with a few files, two of them given old modification times (`touch -t 202401010000`). Check, in Nocturne and Daylight:
 1. Launch lands on the Dashboard; the sidebar reads Dashboard, Chat, Settings, and "Add your name" at the foot.
@@ -4426,7 +4426,7 @@ Back up `~/.spotfile/store.gob` and note whether `settings.json`/`activity.json`
 6. Settings → Privacy: history Off → Recent tiles say "History is off"; Stale after 30 days → the list changes; Clear history → recent lists empty.
 7. A narrow window collapses the grid to one column.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add context docs

@@ -96,6 +96,7 @@ loop triggers one re-index after the file settles, not one per write.
 - It is written **once per completed indexing job**, not per chunk. Writes snapshot the map under a read lock and encode outside it.
 - It is loaded once at launch. Settings adds `DiskSize()`, a single `os.Stat` per `EngineStatus` call, and `settings.json`, a small JSON file written only when a preference changes. Neither touches indexing or search. Clearing the index (`Wipe`) frees the store's memory and file immediately.
 - **Sync with the disk.** Each indexed path carries a stamp (modification time and size) saved in `store.gob`; older files without stamps load unchanged. At launch, with a saved folder, one `filepath.Walk` with an `os.Stat` per file is compared against the stamps (`indexing.Reconcile`, a map lookup per file), and only new or changed files are re-embedded — an unchanged folder costs a walk and no embedding. Without a saved folder, launch stats each indexed path to drop missing files. The watcher's deletes and renames go through the same 2 s debounce and remove entries with one map pass (`RemoveUnder`), persisting only when something was removed.
+- **Dashboard.** `GetDashboard` walks the index once (`DocStats`), stats each indexed file for Free up space, and reads the in-memory history; it runs on page load and at most once per 250 ms burst of index or history events. `activity.json` is rewritten on each search, opened file and index update — a few KB, atomically.
 
 ---
 
