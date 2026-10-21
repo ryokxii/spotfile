@@ -263,3 +263,14 @@ TDD: write each test first and watch it fail.
 ## Known gaps
 
 - **New subfolders aren't watched until the next launch.** The watcher registers the folder tree when it starts; files added to a subfolder created afterwards are picked up by the startup catch-up.
+
+## Implementation notes
+
+Deviations from this design, made in the implementation plan:
+
+1. **Package location:** the settings package lives at `engine/settings`, not `settings/`. CI only runs `go test ./engine/...`, and package `main` tests would need a built `frontend/dist`.
+2. **Folder-reset logic:** it lives in `settings.WithFolder` (returns the new settings plus whether the folder changed). Clearing the index file lives in `vectorstore.Wipe` / `DiskSize`. `App` stays thin.
+3. **When a folder switch empties the index:** after the folder walk finds supported files. A folder with nothing to index leaves the old index alone.
+4. **Boot:** `main.ts` awaits `settings.load()` and then mounts, instead of calling a separate `applyAppearance`. The theme and motion stores stamp `<html>` during App init, before first paint.
+5. **Wording:** the Library figures say "files", matching the existing status line, not "documents".
+6. **Index sync:** stamps are recorded after a batch is embedded (stat taken before), so a store saved mid-batch never marks an unembedded file current. The folder walk is `indexing.Scan`, which counts only regular files, so symlinked files are no longer indexed. With a saved folder, a stale store (different embedding model) is rebuilt by the startup sync rather than `rebuildStaleIndex`.
