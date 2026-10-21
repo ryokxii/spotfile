@@ -1,6 +1,6 @@
 // Stroke icons on a 20×20 grid, drawn in currentColor.
 
-export type IconName = 'search' | 'folder' | 'file' | 'close' | 'chevron-left' | 'chevron-right' | 'minus' | 'plus' | 'target'
+export type IconName = 'search' | 'folder' | 'file' | 'close' | 'chevron-left' | 'chevron-right' | 'minus' | 'plus' | 'target' | 'settings'
 
 export const ICONS: Record<IconName, string[]> = {
   search: ['M8.5 14a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11Z', 'M13 13l3.5 3.5'],
@@ -12,4 +12,12 @@ export const ICONS: Record<IconName, string[]> = {
   minus: ['M5 10h10'],
   plus: ['M10 5v10', 'M5 10h10'],
   target: ['M10 16.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Z', 'M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z'],
+  settings: [
+    'M3.5 6H6',
+    'M10 6h6.5',
+    'M3.5 14H10',
+    'M14 14h2.5',
+    'M8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
+    'M12 16a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
+  ],
 }
