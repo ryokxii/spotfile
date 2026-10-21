@@ -28,7 +28,7 @@ All choices persist across restarts.
 | Question | Decision |
 |---|---|
 | What "Clear index" deletes | `store.gob` and the in-memory index only. Models, saved folder and watcher are untouched. |
-| Folder model | One folder. Choosing a different folder empties the index first. |
+| Folder model | ~~One folder. Choosing a different folder empties the index first.~~ **Superseded 2026-10-21:** several folders, added and removed independently. See *Multiple folders*. |
 | Persistence | One `~/.spotfile/settings.json`, owned by Go. |
 | Layout | Single-column list: Appearance section, then Library section. |
 
@@ -274,3 +274,26 @@ Deviations from this design, made in the implementation plan:
 4. **Boot:** `main.ts` awaits `settings.load()` and then mounts, instead of calling a separate `applyAppearance`. The theme and motion stores stamp `<html>` during App init, before first paint.
 5. **Wording:** the Library figures say "files", matching the existing status line, not "documents".
 6. **Index sync:** stamps are recorded after a batch is embedded (stat taken before), so a store saved mid-batch never marks an unembedded file current. The folder walk is `indexing.Scan`, which counts only regular files, so symlinked files are no longer indexed. With a saved folder, a stale store (different embedding model) is rebuilt by the startup sync rather than `rebuildStaleIndex`.
+
+## Multiple folders
+
+*Added 2026-10-21. Replaces the one-folder model: adding a folder no longer empties the index.*
+
+### Behaviour
+
+- **Library** lists every indexed folder (middle-truncated path, its file count, **Remove…**) and one **Add folder…** button. With none: "No folder yet" and **Add folder…**. Search's folder button reads "Add folder".
+- **Add a folder:** the folder is walked and compared with what is indexed *under it* (`Reconcile`): new and changed files are indexed, gone ones dropped, unchanged ones skipped. The other folders are untouched. Re-adding an indexed folder is therefore a quick catch-up.
+  - Inside an indexed folder → already covered: the list doesn't change; its files are still caught up.
+  - Contains indexed folders → it replaces them in the list; their files stay indexed and aren't re-embedded.
+  - A folder with no supported files → error as before; nothing changes.
+- **Remove a folder** (`ConfirmDialog`: "Remove *Research* from search? Its N files leave the index. The files stay on disk."): its entries are dropped (`RemoveUnder`), the list and watcher updated, `index:changed` emitted. Refused while indexing.
+- **Startup:** each saved folder is caught up as above, in one progress job. A saved folder that no longer exists is removed from the list with its entries. Entries outside every saved folder are dropped — but only when at least one folder is saved, so an index from before folders were saved is kept (missing files are still dropped) until the first folder is added.
+- **Watcher:** one watcher over every saved folder's tree.
+- **Clear index** empties the index and keeps the folder list.
+
+### Data
+
+- `settings.json`: `"folders": ["/a", "/b"]` replaces `"folder"`. A file with the old `"folder"` loads as a one-item list and is saved in the new form.
+- `settings`: `Folders []string`; `WithFolderAdded(dir) (Settings, bool)` (the bool reports whether the list changed) and `WithFolderRemoved(dir) Settings`, both returning copies. Paths are compared cleaned; containment uses `pathutil.Within(path, dir)`, shared with `vectorstore.RemoveUnder`.
+- `EngineStatus.folders`: `[{ "path": "/a", "files": 12 }, …]` in list order, replacing `folder`.
+- `App.RemoveFolder(dir string) error`, new binding.
