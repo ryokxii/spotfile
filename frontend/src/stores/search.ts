@@ -28,6 +28,8 @@ export interface SearchState {
 
 export interface SearchApi {
   search(query: string, topK: number): Promise<SearchResult[]>
+  // Told when a result's file opens in the preview (for recent files).
+  opened?(path: string): void
 }
 
 export interface SearchStore extends Readable<SearchState> {
@@ -65,6 +67,7 @@ export function createSearchStore(api: SearchApi): SearchStore {
       }
     },
     open(result) {
+      api.opened?.(result.docPath)
       update((s) => ({ ...s, preview: { ...previewTargetFor(result), key: resultKey(result) } }))
     },
     close() {
