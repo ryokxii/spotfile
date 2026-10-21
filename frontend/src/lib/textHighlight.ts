@@ -16,6 +16,12 @@ interface NodeSpan {
   end: number // exclusive index of this node's last char within `full`
 }
 
+export interface MatchOptions {
+  // Drop whitespace entirely instead of collapsing it, for views that reformat
+  // the source (pretty-printed JSON) and so add spaces the chunk doesn't have.
+  ignoreWhitespace?: boolean
+}
+
 interface Normalized {
   norm: string // whitespace-collapsed, lowercased projection of `full`
   map: number[] // norm index -> index within `full`
@@ -70,14 +76,14 @@ function collectTextNodes(root: HTMLElement): { full: string; spans: NodeSpan[] 
 
 // Collapse every run of whitespace to a single space and lowercase, recording
 // the source index of each surviving character so hits can be mapped back.
-function normalize(full: string): Normalized {
+function normalize(full: string, { ignoreWhitespace = false }: MatchOptions = {}): Normalized {
   const out: string[] = []
   const map: number[] = []
   let inWhitespace = false
   for (let i = 0; i < full.length; i++) {
     const ch = full[i]
     if (/\s/.test(ch)) {
-      if (!inWhitespace) {
+      if (!inWhitespace && !ignoreWhitespace) {
         out.push(' ')
         map.push(i)
         inWhitespace = true
@@ -91,8 +97,8 @@ function normalize(full: string): Normalized {
   return { norm: out.join(''), map }
 }
 
-function normalizeNeedle(needle: string): string {
-  return needle.replace(/\s+/g, ' ').trim().toLowerCase()
+function normalizeNeedle(needle: string, { ignoreWhitespace = false }: MatchOptions = {}): string {
+  return needle.replace(/\s+/g, ignoreWhitespace ? '' : ' ').trim().toLowerCase()
 }
 
 // Truncate a normalized needle to at most `maxChars`, cutting on a word boundary.
@@ -124,14 +130,15 @@ function locateInSpan(spans: NodeSpan[], fullIndex: number): { node: Text; offse
   return { node: last.node, offset: last.node.data.length }
 }
 
-function locateChunkRange(root: HTMLElement, needle: string): Range | null {
-  const needleNorm = normalizeNeedle(needle)
+// The DOM range showing `needle`, or null when it can't be found.
+export function locateChunkRange(root: HTMLElement, needle: string, options: MatchOptions = {}): Range | null {
+  const needleNorm = normalizeNeedle(needle, options)
   if (needleNorm.length < 4) return null
 
   const { full, spans } = collectTextNodes(root)
   if (spans.length === 0) return null
 
-  const { norm, map } = normalize(full)
+  const { norm, map } = normalize(full, options)
 
   const hit = findNormIndex(norm, needleNorm)
   if (!hit) return null
@@ -153,8 +160,9 @@ function ensureHighlightStyle(): void {
   const style = document.createElement('style')
   style.id = HIGHLIGHT_STYLE_ID
   style.textContent =
-    `::highlight(${HIGHLIGHT_NAME}) { background: var(--color-primary-wash-strong); color: var(--color-ink); }` +
-    `mark.${FALLBACK_MARK_CLASS} { background: var(--color-primary-wash-strong); color: var(--color-ink); border-radius: var(--radius-xs); }`
+    // Background only, so highlighted JSON/YAML keeps its syntax colours.
+    `::highlight(${HIGHLIGHT_NAME}) { background: var(--color-primary-wash-strong); }` +
+    `mark.${FALLBACK_MARK_CLASS} { background: var(--color-primary-wash-strong); color: inherit; border-radius: var(--radius-xs); }`
   document.head.appendChild(style)
 }
 
@@ -206,11 +214,11 @@ export function clearHighlight(): void {
 
 // Highlight `needle` within `root` and scroll `scroller` to center it.
 // Returns whether a match was found. Any previous highlight is cleared first.
-export function highlightAndScroll(root: HTMLElement, scroller: HTMLElement, needle: string): boolean {
+export function highlightAndScroll(root: HTMLElement, scroller: HTMLElement, needle: string, options: MatchOptions = {}): boolean {
   clearHighlight()
   if (!needle || !needle.trim()) return false
 
-  const range = locateChunkRange(root, needle)
+  const range = locateChunkRange(root, needle, options)
   if (!range) return false
 
   applyHighlight(range)
