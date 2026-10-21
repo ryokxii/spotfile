@@ -1,13 +1,17 @@
 <script lang="ts">
   // Plain-text and Markdown preview. `mode` selects rendering: 'text' shows the
-  // raw file in a <pre>; 'markdown' renders sanitized HTML. Both share one
-  // load/decode/highlight lifecycle.
+  // raw file in a <pre> — or, for JSON and YAML, highlighted collapsible source;
+  // 'markdown' renders sanitized HTML. All share one load/decode/highlight
+  // lifecycle.
   import { tick, onDestroy } from 'svelte'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
   import { ReadFileAsBase64 } from '../../wailsjs/go/main/App.js'
   import { decodeBase64Utf8 } from '../lib/base64'
+  import { structuredKindFor, type StructuredKind } from '../lib/structured'
   import { highlightAndScroll, clearHighlight } from '../lib/textHighlight'
+  import PressableSurface from '../ui/PressableSurface.svelte'
+  import StructuredView from './StructuredView.svelte'
   import ViewerShell from './ViewerShell.svelte'
 
   export let docPath: string
@@ -15,7 +19,12 @@
   export let highlightText: string = '' // matched chunk to locate and highlight
   export let onClose: () => void = () => {}
 
+  // Larger JSON/YAML files open as plain text so they stay fast.
+  const MAX_STRUCTURED_CHARS = 2 * 1024 * 1024
+
   let text = '' // raw text (mode: 'text')
+  let structured: StructuredKind | null = null // set when the text renders as JSON/YAML
+  let structuredView: StructuredView
   let html = '' // sanitized HTML (mode: 'markdown')
   let error = ''
   let loading = true
@@ -32,6 +41,8 @@
         html = DOMPurify.sanitize(await marked.parse(decoded))
       } else {
         text = decoded
+        const kind = structuredKindFor(docPath)
+        structured = kind && decoded.length <= MAX_STRUCTURED_CHARS ? kind : null
       }
     } catch (e: any) {
       error = `Failed to load file: ${e?.message || e}`
@@ -46,6 +57,13 @@
   async function doHighlight() {
     if (loading || error || !bodyEl || !scrollEl || !highlightText) return
     let needle = highlightText
+    if (structured) {
+      // Folded blocks aren't rendered, and pretty-printing adds spaces the chunk lacks.
+      structuredView?.expandAll()
+      await tick()
+      highlightAndScroll(bodyEl, scrollEl, needle, { ignoreWhitespace: true })
+      return
+    }
     if (mode === 'markdown') {
       const chunkHtml = await marked.parse(highlightText)
       needle = new DOMParser().parseFromString(chunkHtml, 'text/html').body.textContent || ''
@@ -69,6 +87,12 @@
 </script>
 
 <ViewerShell {docPath} {onClose}>
+  <div slot="toolbar" class="toolbar">
+    {#if structured && !loading && !error}
+      <PressableSurface class="structured-control" title="Fold every block" on:click={() => structuredView?.collapseAll()}>Collapse all</PressableSurface>
+      <PressableSurface class="structured-control" title="Unfold every block" on:click={() => structuredView?.expandAll()}>Expand all</PressableSurface>
+    {/if}
+  </div>
   <div class="content" bind:this={scrollEl}>
     {#if loading}
       <div class="loading">Loading…</div>
@@ -77,6 +101,8 @@
     {:else if mode === 'markdown'}
       <!-- html is sanitized with DOMPurify before assignment -->
       <div class="markdown-body" bind:this={bodyEl}>{@html html}</div>
+    {:else if structured}
+      <div bind:this={bodyEl}><StructuredView bind:this={structuredView} kind={structured} source={text} /></div>
     {:else}
       <pre class="text-body" bind:this={bodyEl}>{text}</pre>
     {/if}
@@ -89,6 +115,19 @@
     min-width: 0;
     overflow: auto;
     padding: var(--space-lg) var(--space-xl) var(--space-xxl);
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xxs);
+    flex-shrink: 0;
+  }
+
+  :global(.structured-control) {
+    padding: var(--space-xxs) var(--space-xs);
+    font-size: var(--text-small-size);
+    color: var(--color-ink-secondary);
   }
 
   .loading,
