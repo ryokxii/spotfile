@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-21
 **Piece:** 5 of 5, redefined from "Profile" to "Dashboard and Profile". Built on `feat/settings-impl` **after** the Settings plan (`docs/superpowers/plans/2026-09-17-settings.md`) is complete; it depends on that plan's `settings.json`, folder state, `DiskSize`, `ConfirmDialog`, `SegmentedControl` and `SettingRow`.
-**Status:** approved design, ready for an implementation plan
+**Status:** approved design, ready for an implementation plan. Updated 2026-10-21 for several indexed folders (*Multiple folders* in the Settings spec).
 
 ## Goal
 
@@ -50,7 +50,7 @@
 ## Layout
 
 ```
-Good evening, Zafer                         ● Watching ~/Documents/Research
+Good evening, Zafer                                ● Watching 2 folders
 [ Search your files…                                              ⌘K ]
 
 ┌ DISK ─────────────────────────┐ ┌ RECENTLY OPENED ──────────┐
@@ -70,7 +70,7 @@ Good evening, Zafer                         ● Watching ~/Documents/Research
 ```
 
 - Greeting: "Good morning / afternoon / evening, {name}" by local hour (5–12, 12–18, else evening); "Good evening" alone when the name is empty. Fraunces display type, the only display type on the page.
-- Status line beside the greeting reuses the existing `indexStatus` text (watching / indexing / no folder).
+- Status line beside the greeting reuses the existing `indexStatus` text (watching the folder by name, or "watching N folders" / indexing / no folder).
 - The disk figure uses tabular numerals and the Settings plan's `lib/format.ts`. File-type bar segments use `--color-identity-0…5` in a fixed type order; types beyond six are grouped as "Other".
 - Free up space shows the 3 largest stale files; "Show all N →" opens `StaleFilesDialog` with the full list and the same row actions.
 - Below ~900 px of content width the grid collapses to one column in the order: Disk, Recently opened, Recent searches, Free up space.
@@ -174,7 +174,7 @@ StaleDays int    `json:"staleDays"` // 30 | 90 | 180, default 90
   type TypeCount struct { Type string `json:"type"`; Files int `json:"files"` }
   type StaleFile struct { Path string `json:"path"`; Bytes int64 `json:"bytes"`; Modified time.Time `json:"modified"` }
   type Dashboard struct {
-      Folder         string            `json:"folder"`
+      Folders        []FolderStat      `json:"folders"`        // as in EngineStatus
       IndexBytes     int64             `json:"indexBytes"`
       Files          int               `json:"files"`
       Chunks         int               `json:"chunks"`
@@ -192,7 +192,7 @@ StaleDays int    `json:"staleDays"` // 30 | 90 | 180, default 90
   Types come from the existing `lib/fileTypes` mapping, mirrored in Go by extension (PDF, Markdown, Text, …). Modification times come from `os.Stat`; a file that no longer exists on disk is skipped. With history off, `RecentSearches` and `RecentFiles` are empty.
 - `RemoveFromIndex(path string) error`: `store.RemoveDoc(path)`, `store.Persist()`, emit `index:changed`. Refused with `indexing is in progress` while `indexMu` is held. If the file is edited later the watcher re-indexes it, which is correct: it is no longer stale.
 - `MoveToTrash(path string) error`:
-  - Refused unless `path` is absolute, cleaned, inside the saved folder (no `..` escape, symlinks resolved) **and** present in the index.
+  - Refused unless `path` is absolute, cleaned, within one of the saved folders (`pathutil.Within`; no `..` escape, symlinks resolved) **and** present in the index.
   - Calls a `Trasher` interface (`Trash(path string) error`). The real implementation uses the macOS Finder Trash and the Windows Recycle Bin; it never falls back to a permanent delete. If trashing fails, the error is returned and nothing else changes.
   - On success: remove from the index as above, drop the path from `Opened`, emit `index:changed`.
 - `ForgetOpened(path string) error`: `activity.WithoutOpened`, save, emit `activity:changed`.
@@ -251,7 +251,7 @@ TDD throughout; 80% coverage on new code.
 - `activity.Stale`: table tests with an injected `now` covering modified-only, opened-recently, both old, missing open entry, ordering.
 - `vectorstore.DocStats`: per-file chunk counts and byte estimates.
 - `settings`: new field defaults, validation, old files without the fields.
-- Trash path checks extracted to a pure function (`trashAllowed(path, folder string, indexed func(string) bool) error`) and tested for `..`, symlink escape, outside folder, not indexed; `MoveToTrash` tested with a fake `Trasher`.
+- Trash path checks extracted to a pure function (`trashAllowed(path string, folders []string, indexed func(string) bool) error`) and tested for `..`, symlink escape, outside every folder, inside the second of two folders, not indexed; `MoveToTrash` tested with a fake `Trasher`.
 
 **Frontend (Vitest)**
 - `greeting` and `initials`.
