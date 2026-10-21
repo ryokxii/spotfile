@@ -16,6 +16,14 @@ const count = (n: number, noun: string): string => `${n.toLocaleString('en-US')}
 
 const firstLine = (message: string): string => message.split('\n')[0]
 
+// "Notes", "2 folders", "Notes and 3 files", "plan.md" — or '' with nothing saved.
+function watchedRoots({ folders, files }: EngineState): string {
+  if (folders.length + files.length === 1) return filename(folders[0]?.path ?? files[0])
+  const folderPart = folders.length === 1 ? filename(folders[0].path) : folders.length > 1 ? count(folders.length, 'folder') : ''
+  const filePart = files.length > 0 ? count(files.length, 'file') : ''
+  return [folderPart, filePart].filter(Boolean).join(' and ')
+}
+
 export function statusLine(s: EngineState): StatusLine {
   if (s.error) return { tone: 'error', text: firstLine(s.error), progress: null }
   if (s.indexError) return { tone: 'error', text: firstLine(s.indexError), progress: null }
@@ -37,7 +45,7 @@ export function statusLine(s: EngineState): StatusLine {
   if (s.documents === 0) return { tone: 'neutral', text: 'No folder indexed yet', progress: null }
 
   const parts = [count(s.documents, 'file'), count(s.chunks, 'chunk')]
-  if (s.watching && s.folders.length === 1) parts.push(`watching ${filename(s.folders[0].path)}`)
-  else if (s.watching && s.folders.length > 1) parts.push(`watching ${s.folders.length} folders`)
+  const watched = s.watching ? watchedRoots(s) : ''
+  if (watched) parts.push(`watching ${watched}`)
   return { tone: 'neutral', text: parts.join(' · '), progress: null }
 }

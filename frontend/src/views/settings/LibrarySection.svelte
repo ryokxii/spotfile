@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The indexed folders, what the index holds, and clearing it.
+  // The indexed folders and files, what the index holds, and clearing it.
   import { formatBytes, truncateMiddle } from '../../lib/format'
   import { filename } from '../../lib/path'
   import type { FolderStat } from '../../stores/engine'
@@ -14,13 +14,15 @@
   let confirming = false
   let clearing = false
   let clearError = ''
-  let removing: FolderStat | null = null // folder awaiting confirmation
+  // A folder or listed file awaiting confirmation; `files` counts what leaves the index.
+  let removing: { kind: 'folder' | 'file'; path: string; files: number } | null = null
   let removeError = ''
 
   const fileCount = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'file' : 'files'}`
 
   $: indexing = $engine.indexing !== null
   $: hasFolder = $engine.folders.length > 0
+  $: hasFiles = $engine.files.length > 0
   $: files = fileCount($engine.documents)
   $: figures = [
     { label: $engine.documents === 1 ? 'file' : 'files', value: $engine.documents.toLocaleString() },
@@ -35,17 +37,23 @@
     clearing = false
   }
 
+  const askToRemoveFolder = (folder: FolderStat) => (removing = { kind: 'folder', path: folder.path, files: folder.files })
+  const askToRemoveFile = (path: string) => (removing = { kind: 'file', path, files: 1 })
+
   async function remove() {
     if (!removing) return
-    const dir = removing.path
+    const { kind, path } = removing
     removing = null
-    removeError = await engine.removeFolder(dir)
+    removeError = kind === 'folder' ? await engine.removeFolder(path) : await engine.removeFile(path)
   }
 </script>
 
 <SettingsSection title="Library">
-  <SettingRow label="Indexed folders" hint={hasFolder ? 'Search covers every folder listed' : 'No folder yet'}>
-    <Button disabled={indexing} on:click={engine.chooseFolder}>Add folder…</Button>
+  <SettingRow label="Indexed folders and files" hint={hasFolder || hasFiles ? 'Search covers everything listed' : 'No folder or file yet'}>
+    <div class="add">
+      <Button disabled={indexing} on:click={engine.chooseFolder}>Add folder…</Button>
+      <Button disabled={indexing} on:click={engine.chooseFiles}>Add files…</Button>
+    </div>
   </SettingRow>
 
   {#if hasFolder}
@@ -54,7 +62,19 @@
         <li class="folder">
           <span class="path truncate" title={folder.path}>{truncateMiddle(folder.path, PATH_MAX)}</span>
           <span class="count">{fileCount(folder.files)}</span>
-          <Button disabled={indexing} on:click={() => (removing = folder)}>Remove…</Button>
+          <Button disabled={indexing} on:click={() => askToRemoveFolder(folder)}>Remove…</Button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if hasFiles}
+    <h3 class="subhead">Individual files</h3>
+    <ul class="folders">
+      {#each $engine.files as file (file)}
+        <li class="folder">
+          <span class="path truncate" title={file}>{truncateMiddle(file, PATH_MAX)}</span>
+          <Button disabled={indexing} on:click={() => askToRemoveFile(file)}>Remove…</Button>
         </li>
       {/each}
     </ul>
@@ -94,17 +114,34 @@
 <ConfirmDialog
   open={removing !== null}
   title={`Remove ${removing ? filename(removing.path) : ''} from search?`}
-  confirmLabel="Remove folder"
+  confirmLabel={removing?.kind === 'file' ? 'Remove file' : 'Remove folder'}
   on:confirm={remove}
   on:cancel={() => (removing = null)}
 >
-  <p>
-    {(removing?.files ?? 0) === 1 ? 'Its 1 file leaves' : `Its ${fileCount(removing?.files ?? 0)} leave`} the index. The files stay on disk,
-    and you can add the folder again later.
-  </p>
+  {#if removing?.kind === 'file'}
+    <p>It leaves the index. The file stays on disk, and you can add it again later.</p>
+  {:else}
+    <p>
+      {(removing?.files ?? 0) === 1 ? 'Its 1 file leaves' : `Its ${fileCount(removing?.files ?? 0)} leave`} the index. The files stay on disk,
+      and you can add the folder again later.
+    </p>
+  {/if}
 </ConfirmDialog>
 
 <style>
+  .add {
+    display: flex;
+    gap: var(--space-xs);
+    flex-shrink: 0;
+  }
+
+  .subhead {
+    margin: var(--space-xs) 0 var(--space-xxs);
+    font-size: var(--text-small-size);
+    font-weight: var(--text-body-strong-weight);
+    color: var(--color-ink-secondary);
+  }
+
   .folders {
     list-style: none;
     display: flex;

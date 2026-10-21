@@ -38,9 +38,9 @@
   $: data = $dashboard.data
   $: status = statusLine($engine)
   $: indexing = $engine.indexing !== null
-  $: hasLibrary = $engine.folders.length > 0 || $engine.documents > 0
+  $: hasLibrary = $engine.folders.length > 0 || $engine.files.length > 0 || $engine.documents > 0
   $: canSearch = $engine.ready && $engine.documents > 0
-  $: placeholder = canSearch ? 'Search your files…' : hasLibrary ? 'Indexing — search opens when it finishes…' : 'Index a folder to start searching…'
+  $: placeholder = canSearch ? 'Search your files…' : hasLibrary ? 'Indexing — search opens when it finishes…' : 'Add a folder or files to start searching…'
 
   function runSearch(query: string) {
     void search.submit(query)
@@ -76,8 +76,11 @@
 
     {#if !hasLibrary}
       <section class="tile empty">
-        <p>Choose a folder to index, and your library's figures appear here.</p>
-        <Button variant="primary" on:click={engine.chooseFolder}>Choose a folder</Button>
+        <p>Add a folder or individual files to index, and your library's figures appear here.</p>
+        <div class="actions">
+          <Button variant="primary" on:click={engine.chooseFolder}>Choose a folder</Button>
+          <Button on:click={engine.chooseFiles}>Add files</Button>
+        </div>
       </section>
     {:else if !data && $dashboard.phase === 'error'}
       <section class="tile empty">
@@ -219,6 +222,11 @@
   .dashboard-view :global(.tile .muted) {
     color: var(--color-ink-faint);
     font-size: var(--text-small-size);
+  }
+
+  .actions {
+    display: flex;
+    gap: var(--space-xs);
   }
 
   .empty {

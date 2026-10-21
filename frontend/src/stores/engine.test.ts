@@ -12,13 +12,13 @@ describe('reduce', () => {
   })
 
   it('applies a status snapshot', () => {
-    const s = apply({ type: 'status', status: { ready: true, error: '', documents: 17, chunks: 819, folders: [{ path: '/notes', files: 17 }], indexBytes: 4096 } })
-    expect(s).toMatchObject({ ready: true, documents: 17, chunks: 819, folders: [{ path: '/notes', files: 17 }], indexBytes: 4096 })
+    const s = apply({ type: 'status', status: { ready: true, error: '', documents: 17, chunks: 819, folders: [{ path: '/notes', files: 17 }], files: [], indexBytes: 4096 } })
+    expect(s).toMatchObject({ ready: true, documents: 17, chunks: 819, folders: [{ path: '/notes', files: 17 }], files: [], indexBytes: 4096 })
   })
 
   it('index:cleared zeroes the figures and keeps the folders', () => {
     const s = apply(
-      { type: 'status', status: { ready: true, error: '', documents: 3, chunks: 30, folders: [{ path: '/notes', files: 3 }], indexBytes: 2048 } },
+      { type: 'status', status: { ready: true, error: '', documents: 3, chunks: 30, folders: [{ path: '/notes', files: 3 }], files: [], indexBytes: 2048 } },
       { type: 'index:cleared' },
     )
     expect(s).toMatchObject({ documents: 0, chunks: 0, indexBytes: 0 })
@@ -44,7 +44,7 @@ describe('reduce', () => {
 
   it('index:start for a new folder keeps the folders already indexed', () => {
     const s = apply(
-      { type: 'status', status: { ready: true, error: '', documents: 3, chunks: 30, folders: [{ path: '/notes', files: 3 }], indexBytes: 1 } },
+      { type: 'status', status: { ready: true, error: '', documents: 3, chunks: 30, folders: [{ path: '/notes', files: 3 }], files: [], indexBytes: 1 } },
       { type: 'index:start', total: 2, dir: '/work' },
     )
     expect(s.folders.map((f) => f.path)).toEqual(['/notes'])
@@ -94,11 +94,14 @@ function fakeRuntime(overrides: Partial<EngineRuntime> = {}) {
       handlers.set(event, cb)
       return () => handlers.delete(event)
     },
-    status: vi.fn(async () => ({ ready: true, error: '', documents: 5, chunks: 50, folders: [], indexBytes: 0 })),
+    status: vi.fn(async () => ({ ready: true, error: '', documents: 5, chunks: 50, folders: [], files: [], indexBytes: 0 })),
     selectFolder: vi.fn(async () => '/picked'),
     indexFolder: vi.fn(async () => undefined),
     clearIndex: vi.fn(async () => undefined),
     removeFolder: vi.fn(async () => undefined),
+    selectFiles: vi.fn(async () => ['/n/a.md', '/n/b.json']),
+    addFiles: vi.fn(async () => undefined),
+    removeFile: vi.fn(async () => undefined),
     ...overrides,
   }
   return { runtime, emit: (event: string, ...data: unknown[]) => handlers.get(event)?.(...data), handlers }
@@ -124,8 +127,8 @@ describe('createEngineStore', () => {
   it('refreshes totals from the backend when indexing finishes', async () => {
     const status = vi
       .fn()
-      .mockResolvedValueOnce({ ready: true, error: '', documents: 0, chunks: 0, folders: [], indexBytes: 0 })
-      .mockResolvedValueOnce({ ready: true, error: '', documents: 9, chunks: 120, folders: [], indexBytes: 0 })
+      .mockResolvedValueOnce({ ready: true, error: '', documents: 0, chunks: 0, folders: [], files: [], indexBytes: 0 })
+      .mockResolvedValueOnce({ ready: true, error: '', documents: 9, chunks: 120, folders: [], files: [], indexBytes: 0 })
     const { runtime, emit } = fakeRuntime({ status })
     const engine = createEngineStore(runtime)
     await engine.start()
@@ -173,8 +176,8 @@ describe('createEngineStore', () => {
   it('refreshes status on engine:ready, when the backend may have forgotten a missing folder', async () => {
     const status = vi
       .fn()
-      .mockResolvedValueOnce({ ready: false, error: '', documents: 0, chunks: 0, folders: [{ path: '/gone', files: 0 }], indexBytes: 0 })
-      .mockResolvedValueOnce({ ready: true, error: '', documents: 0, chunks: 0, folders: [], indexBytes: 0 })
+      .mockResolvedValueOnce({ ready: false, error: '', documents: 0, chunks: 0, folders: [{ path: '/gone', files: 0 }], files: [], indexBytes: 0 })
+      .mockResolvedValueOnce({ ready: true, error: '', documents: 0, chunks: 0, folders: [], files: [], indexBytes: 0 })
     const { runtime, emit } = fakeRuntime({ status })
     const engine = createEngineStore(runtime)
     await engine.start()
@@ -198,6 +201,31 @@ describe('createEngineStore', () => {
   it('removeFolder returns the backend error message', async () => {
     const { runtime } = fakeRuntime({ removeFolder: vi.fn(() => Promise.reject(new Error('indexing is in progress'))) })
     expect(await createEngineStore(runtime).removeFolder('/notes')).toBe('indexing is in progress')
+  })
+
+  it('chooseFiles adds the picked files and ignores a cancelled picker', async () => {
+    const { runtime } = fakeRuntime()
+    await createEngineStore(runtime).chooseFiles()
+    expect(runtime.addFiles).toHaveBeenCalledWith(['/n/a.md', '/n/b.json'])
+
+    const cancelled = fakeRuntime({ selectFiles: vi.fn(async () => []) })
+    await createEngineStore(cancelled.runtime).chooseFiles()
+    expect(cancelled.runtime.addFiles).not.toHaveBeenCalled()
+  })
+
+  it('chooseFiles reports a rejected add as an index error', async () => {
+    const { runtime } = fakeRuntime({ addFiles: vi.fn(() => Promise.reject(new Error('none of the selected files can be indexed'))) })
+    const engine = createEngineStore(runtime)
+    await engine.chooseFiles()
+    expect(get(engine).indexError).toBe('none of the selected files can be indexed')
+  })
+
+  it('removeFile resolves to an error message, or empty on success', async () => {
+    const { runtime } = fakeRuntime()
+    expect(await createEngineStore(runtime).removeFile('/n/a.md')).toBe('')
+    expect(runtime.removeFile).toHaveBeenCalledWith('/n/a.md')
+    const failing = fakeRuntime({ removeFile: vi.fn(() => Promise.reject(new Error('indexing is in progress'))) })
+    expect(await createEngineStore(failing.runtime).removeFile('/n/a.md')).toBe('indexing is in progress')
   })
 
   it('refreshes status on index:changed, when files were dropped outside an indexing job', async () => {

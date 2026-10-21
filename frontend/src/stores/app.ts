@@ -12,9 +12,12 @@ import {
   IndexFolder,
   MoveToTrash,
   RecordOpened,
+  AddFiles,
+  RemoveFile,
   RemoveFolder,
   RemoveFromIndex,
   Search,
+  SelectFiles,
   SelectFolder,
   SetAppearance,
   SetPrivacy,
@@ -57,6 +60,9 @@ export const engine = createEngineStore({
   indexFolder: IndexFolder,
   clearIndex: ClearIndex,
   removeFolder: RemoveFolder,
+  selectFiles: SelectFiles,
+  addFiles: AddFiles,
+  removeFile: RemoveFile,
 })
 
 export const search = createSearchStore({

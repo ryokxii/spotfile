@@ -16,6 +16,7 @@ export interface EngineStatus {
   documents: number
   chunks: number
   folders: FolderStat[]
+  files: string[]
   indexBytes: number
 }
 
@@ -39,6 +40,7 @@ export interface EngineState {
   chunks: number
   indexBytes: number // size of the index file on disk
   folders: FolderStat[] // indexed folders, in the order they were added
+  files: string[] // individually indexed files
 }
 
 export type EngineEvent =
@@ -66,6 +68,7 @@ export const initialEngineState: EngineState = {
   chunks: 0,
   indexBytes: 0,
   folders: [],
+  files: [],
 }
 
 export function reduce(state: EngineState, event: EngineEvent): EngineState {
@@ -123,6 +126,9 @@ export interface EngineRuntime {
   indexFolder(dir: string): Promise<void>
   clearIndex(): Promise<void>
   removeFolder(dir: string): Promise<void>
+  selectFiles(): Promise<string[]>
+  addFiles(paths: string[]): Promise<void>
+  removeFile(path: string): Promise<void>
 }
 
 export interface EngineStore extends Readable<EngineState> {
@@ -133,6 +139,9 @@ export interface EngineStore extends Readable<EngineState> {
   clearIndex(): Promise<string>
   // Stops indexing a folder; resolves to an error message, or '' on success.
   removeFolder(dir: string): Promise<string>
+  chooseFiles(): Promise<void>
+  // Stops indexing a listed file; resolves to an error message, or '' on success.
+  removeFile(path: string): Promise<string>
 }
 
 interface ProgressPayload {
@@ -209,6 +218,23 @@ export function createEngineStore(runtime: EngineRuntime): EngineStore {
         await runtime.indexFolder(dir)
       } catch (err) {
         dispatch({ type: 'index:error', message: messageOf(err) })
+      }
+    },
+    async chooseFiles() {
+      try {
+        const paths = (await runtime.selectFiles()) ?? []
+        if (paths.length === 0) return
+        await runtime.addFiles(paths)
+      } catch (err) {
+        dispatch({ type: 'index:error', message: messageOf(err) })
+      }
+    },
+    async removeFile(path) {
+      try {
+        await runtime.removeFile(path)
+        return ''
+      } catch (err) {
+        return messageOf(err)
       }
     },
     async removeFolder(dir) {

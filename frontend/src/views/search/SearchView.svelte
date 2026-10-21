@@ -14,7 +14,7 @@
   $: hasIndex = $engine.documents > 0 || $engine.indexing !== null
   $: canSearch = $engine.ready && $engine.documents > 0
   $: searching = $search.phase !== 'idle'
-  $: placeholder = canSearch ? 'Search your files…' : hasIndex ? 'Indexing — search opens when it finishes…' : 'Index a folder to start searching…'
+  $: placeholder = canSearch ? 'Search your files…' : hasIndex ? 'Indexing — search opens when it finishes…' : 'Add a folder or files to start searching…'
   $: folderTitle = $engine.folders.length > 0 ? 'Add folder' : 'Choose a folder to index'
 
   function onKeydown(e: KeyboardEvent) {
@@ -39,6 +39,7 @@
         {folderTitle}
         on:submit={(e) => search.submit(e.detail)}
         on:chooseFolder={engine.chooseFolder}
+        on:chooseFiles={engine.chooseFiles}
       />
       <IndexStatus state={$engine} />
     </div>
