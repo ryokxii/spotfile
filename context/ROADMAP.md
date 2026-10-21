@@ -1,54 +1,75 @@
 # Spotfile — Project Roadmap
 
-> Status legend: `[x]` complete · `[~]` partial (see **Follow-up Gaps**) · `[ ]` not started
+> Status legend: `[x]` complete · `[~]` in progress or partial (see notes) · `[ ]` not started
+>
+> Keep this file current in the same branch as the change (see `context/CLAUDE.md` §2).
 
 ## Phase 1: Project Scaffolding & Core Architecture
 
-- [x] **Initialize Wails Project** — Scaffold the app using `wails init` with Go backend + Svelte/TypeScript frontend
-- [x] **Configure ONNX Runtime** — Integrate Go bindings for ONNX Runtime for local AI inference without a Python dependency
-- [x] **Setup Hardware Acceleration** — Enable Execution Providers: Metal (macOS), DirectML/CUDA (Windows) for GPU/NPU offloading (`engine/embedder/provider_*.go`)
-- [x] **Define App Data Storage** — `~/.spotfile` used for model/vocab assets and the persisted vector store (`store.gob`), gob-encoded and reloaded on launch (Gap 1)
+- [x] **Initialize Wails Project** — Wails v2 app with a Go backend and a Svelte + TypeScript frontend
+- [x] **Local inference engine** — llama.cpp's `llama-server` runs as a child process (`engine/llamaserver`): started on demand, authenticated loopback API key passed in a private file, restarted after a crash, never outlives Spotfile. Replaced ONNX Runtime, which was removed (PR #5)
+- [x] **Hardware acceleration** — `-ngl 99` puts all model layers on the GPU when present (Metal on macOS); CPU otherwise
+- [x] **Define App Data Storage** — `~/.spotfile/` holds `models/` (GGUF files) and the persisted vector store `store.gob`, reloaded on launch
 
 ---
 
 ## Phase 2: High-Performance Indexing (Go Backend)
 
-- [x] **Implement Parallel Indexer** — Use Goroutines + Worker Pools to process files simultaneously across all CPU cores
-- [x] **Build Vector Streaming Pipeline** — MPSC channels to separate document parsing from model inference (read next file while current is being embedded)
-- [x] **Configure bge-small-en-v1.5** — Use the int8 quantized BGE model within ONNX for fast, memory-efficient vectorization
-- [x] **Implement Vector Batching** — Group text chunks (16–32 at a time) before calling inference to reduce overhead (`BatchEmbed`, batch size 32)
+- [x] **Bounded read pool** — reader goroutines capped at the CPU count drain a shared path channel
+- [x] **Streaming pipeline** — read → chunk → embed stages connected by bounded channels, so reading overlaps inference
+- [x] **Embedding model** — bge-small-en-v1.5 as an f16 GGUF on `llama-server --embeddings` with CLS pooling and bge's query instruction for searches
+- [x] **Token-accurate chunking** — 250-word windows (40-word overlap), split further with llama.cpp's tokenizer until each fits the 510-token limit; nothing is silently truncated
+- [x] **Vector batching** — 16 chunks per embedding request, at most 2 concurrent requests (the server's parallel slots)
+- [x] **Index migration** — `store.gob` records the embedding model ID; an old-format or different-model store is rebuilt on launch with progress
 
 ---
 
 ## Phase 3: Real-Time Sync & Local Inference
 
-- [x] **Setup "Silent Engine" Watcher** — `fsnotify` watcher re-indexes changed files and emits `watcher:reindexing` / `watcher:done` (Gap 3)
-- [x] **Apply Debouncing Logic** — ~2-second debounce on watcher events prevents CPU spikes during active edits
-- [ ] **Integrate Local LLM Inference** — Wiring is in place (`GenerateAnswer` → `LLM.Generate`), but generation returns a graceful "model not loaded" message; real GGUF inference **deferred** (Gap 2)
-- [x] **Prioritize Recent Files** — Real two-tier priority queue (`engine/indexing/queue.go`): recent files index at high priority, history backfills in the background, watcher edits jump the queue at urgent priority (Gap 4)
+- [x] **"Silent Engine" watcher** — `fsnotify` re-indexes changed files and emits `watcher:reindexing` / `watcher:done`
+- [x] **Debouncing** — ~2-second debounce per file prevents CPU spikes during active edits
+- [x] **Priority queue** — urgent (live edits) > high (files modified in the last 7 days) > low (history backfill)
+- [ ] **Local LLM answers** — `GenerateAnswer` and `engine/llm` are placeholders that return "model not loaded". Delivered by App piece 3, *Chat engine* (Gap 2)
 
 ---
 
 ## Phase 4: UI & User Experience
 
-- [x] **Bridge Frontend & Backend** — Go indexing/search methods bound to the frontend via Wails' native binding system
-- [x] **Integrate PDF.js Viewer** — PDF viewer with page-level jumping and answer highlighting (`ReadFileAsBase64`, `PageNum` on results)
-- [x] **Add Progressive Status UI** — Live indexing indicator via `index:start` / `index:prepared` / `index:chunk` / `index:done` events
+- [x] **Bridge Frontend & Backend** — Go methods bound via Wails; long work reports progress through events, each with a frontend listener
+- [x] **PDF.js Viewer** — docked preview with page jumping and match highlighting; text and Markdown viewers alongside
+- [x] **Progressive Status UI** — live indexing status from `index:*` and `watcher:*` events; `EngineStatus` lets a freshly loaded UI catch up
+- [x] **Design system** — Nocturne and Daylight themes as CSS tokens (`context/DESIGN.md`, `styles/tokens.css`) with an automated contrast test; bundled Fraunces + Work Sans
 
 ---
 
 ## Phase 5: Deployment & Distribution
 
-- [ ] **Automate Multi-Platform Builds** — GitHub Actions CI/CD to build native binaries for macOS (`.app`/`.dmg`) and Windows (`.exe`)
-- [ ] **Prepare "Quarantine" Documentation** — Guide for bypassing macOS Gatekeeper (`xattr`) and Windows SmartScreen for unsigned releases
-- [ ] **Generate App Icons** — Use Wails tools to produce `.icns` and `.ico` formats for a professional native look
+- [x] **Automate Multi-Platform Builds** — GitHub Actions builds a macOS universal `.app` and a Windows `.exe`, and publishes a release on `v*` tags; CI also runs lint, tests against a real llama-server, the peak-memory test and benchmarks
+- [x] **"Quarantine" documentation** — `docs/INSTALLING.md` covers macOS Gatekeeper (`xattr`) and Windows SmartScreen
+- [ ] **Generate App Icons** — `build/appicon.png` is still the Wails template icon
+
+---
+
+## Phase 6: App Experience (five pieces, in order)
+
+- [x] **1. App shell** — sidebar navigation with routes, design tokens, stores for engine/search/theme, restyled Search view (PR #9)
+- [x] **2. Settings** — theme (System / Nocturne / Daylight), reduce motion, several indexed folders added and removed independently with the watcher resumed on launch, storage figures, Clear index; saved in `~/.spotfile/settings.json`. The index stays in sync with the disk (see Gap 6). Spec: `docs/superpowers/specs/2026-09-17-settings-design.md`. Plans: `docs/superpowers/plans/2026-09-17-settings.md`, `docs/superpowers/plans/2026-10-21-multiple-folders.md`
+- [~] **3. Chat engine** — design in progress. Decided: engine plus a single unsaved chat page; Qwen3-1.7B (Q4_K_M) with thinking disabled; every message searches the index and answers only from your files with numbered citations; follow-ups search the new message blended with the previous one. Pending: streaming approach (proposed: Go streams tokens as Wails events, with Stop)
+- [ ] **4. Chat sessions** — multiple conversations, saved and listed, organised into folders of chats; clearing chat history
+- [x] **5. Dashboard and Profile** — Dashboard becomes the launch page (search bar, index disk usage, files by type, last updated file, recent searches and files, Free up space with Remove from index / Move to Trash); Profile holds the display name; Search is renamed Chat at `/chat`; Settings gains a Privacy section. History in `~/.spotfile/activity.json`. Design: `docs/superpowers/specs/2026-10-21-dashboard-profile-design.md`. Plan: `docs/superpowers/plans/2026-10-21-dashboard-profile.md`
+
+### Future
+
+- [ ] **Account sign-up with opt-in usage metrics** — the app's only online feature; off unless the user chooses to share, with full transparency about what is sent
 
 ---
 
 ## Follow-up Gaps (tracked)
 
-- [x] **Gap 1 — Persist & de-duplicate the vector store.** `VectorStore` is now keyed by `DocPath`; gob-persisted to `~/.spotfile/store.gob` (atomic temp+rename), loaded on launch, and re-indexing a path replaces its chunks via `RemoveDoc`/`RemoveDocs` instead of accumulating duplicates. (`engine/vectorstore/`)
-- [ ] **Gap 2 — Finish LLM integration.** *Deferred by decision.* `GenerateAnswer` searches and formats context correctly, but `LLM.Generate` returns a graceful "model not loaded" message. Loading a real 4-bit GGUF model (cgo llama binding or Ollama HTTP) is tracked as its own follow-up.
-- [x] **Gap 3 — Emit watcher UI events.** The watcher's urgent re-index job emits `watcher:reindexing` (with path) on start and `watcher:done` on completion, driving the StatusBar. (`engine/indexing/watcher.go`)
-- [x] **Gap 4 — Real priority queue for indexing.** New `Indexer` (`engine/indexing/queue.go`) with per-level FIFO queues (Urgent/High/Low) drained by a single background worker; recent files enqueue High, history Low, watcher edits Urgent. Preserves batching by handing each drained batch to `indexing.EmbedFiles`.
-- [x] **Gap 5 — Bound file-reader concurrency.** The read stage now uses a bounded pool of `Workers` reader goroutines draining a shared channel, instead of one goroutine per file. (`engine/indexing/pipeline.go`)
+- [x] **Gap 1 — Persist & de-duplicate the vector store.** `VectorStore` is keyed by `DocPath`; gob-persisted to `~/.spotfile/store.gob` (atomic temp+rename), loaded on launch; re-indexing a path replaces its chunks. (`engine/vectorstore/`)
+- [~] **Gap 2 — Finish LLM integration.** Scheduled as App piece 3, *Chat engine*: a second llama-server running the chat model, replacing the `engine/llm` placeholder.
+- [x] **Gap 3 — Emit watcher UI events.** `watcher:reindexing` (with path) and `watcher:done` drive the status line. (`engine/indexing/watcher.go`)
+- [x] **Gap 4 — Real priority queue for indexing.** Per-level FIFO queues (Urgent/High/Low) drained by a single worker, at most 256 paths per level per iteration so new urgent work isn't starved. (`engine/indexing/queue.go`)
+- [x] **Gap 5 — Bound file-reader concurrency.** Bounded reader pool instead of one goroutine per file. (`engine/indexing/pipeline.go`)
+- [x] **Gap 6 — Keep the index in sync with the disk.** Bug: entries from a deleted or previously indexed folder were never removed, and a moved file stayed searchable at its old path. Fixed as part of Settings: indexing a folder prunes what isn't in it, the watcher forgets deleted and renamed paths, and startup removes missing files and re-indexes new and changed ones (per-file modification time and size stored in the index). Spec: *Keeping the index in sync* in `docs/superpowers/specs/2026-09-17-settings-design.md`
+- [ ] **Gap 7 — Search scales linearly.** `VectorStore.Search` scores and sorts every chunk on each query. Fine at today's sizes; an approximate index or top-k heap is needed for very large libraries (see `PERFORMANCE.md` §7).

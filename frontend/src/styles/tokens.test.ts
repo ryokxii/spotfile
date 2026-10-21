@@ -10,9 +10,9 @@ import { contrastRatio } from '../lib/theme/contrast'
 const css = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 
 // Custom properties declared in the rule whose selector list contains `selector`.
-function declarations(selector: string): Record<string, string> {
+function declarations(selector: string, source = css): Record<string, string> {
   const rule = /([^{}]+)\{([^}]*)\}/g
-  for (let m = rule.exec(css); m; m = rule.exec(css)) {
+  for (let m = rule.exec(source); m; m = rule.exec(source)) {
     const selectors = m[1].split(',').map((s) => s.trim())
     if (!selectors.includes(selector)) continue
     const vars: Record<string, string> = {}
@@ -51,5 +51,38 @@ describe('theme parity', () => {
     const nocturne = Object.keys(declarations(THEMES.nocturne)).sort()
     const daylight = Object.keys(declarations(THEMES.daylight)).sort()
     expect(daylight).toEqual(nocturne)
+  })
+})
+
+const MOTION_TOKENS = [
+  '--motion-instant',
+  '--motion-quick',
+  '--motion-normal',
+  '--motion-slow',
+  '--motion-stagger',
+  '--motion-press',
+  '--motion-rise',
+  '--motion-spin',
+]
+
+describe('reduce motion', () => {
+  const forced = () => declarations(":root[data-motion='reduce']")
+
+  it('covers every motion token defined on :root', () => {
+    const defined = Object.keys(declarations(':root')).filter((k) => k.startsWith('--motion-'))
+    expect(defined.sort()).toEqual([...MOTION_TOKENS].sort())
+  })
+
+  it('the Settings override zeroes every motion token and the press scale', () => {
+    const vars = forced()
+    for (const token of MOTION_TOKENS) expect(vars[token], token).toMatch(/^0(ms|px)$/)
+    expect(vars['--press-scale']).toBe('1')
+  })
+
+  it('the OS setting zeroes the same tokens unless Settings forces motion on', () => {
+    const media = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\}\s*\}/.exec(css)
+    expect(media).not.toBeNull()
+    const os = declarations(":root:not([data-motion='full'])", `${media![1]}}`)
+    expect(os).toEqual(forced())
   })
 })

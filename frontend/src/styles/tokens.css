@@ -79,10 +79,25 @@
   --content-max: 1240px;
   --search-column-max: 760px; /* readable measure for the search column */
   --results-min: 360px; /* results column floor when a preview is open */
+  --settings-column-max: 640px; /* readable measure for the settings list */
+}
+
+/* Reduce motion: Settings "On" sets data-motion="reduce"; "Off" sets "full",
+   which overrides the OS setting; "System" removes the attribute. */
+:root[data-motion='reduce'] {
+  --motion-instant: 0ms;
+  --motion-quick: 0ms;
+  --motion-normal: 0ms;
+  --motion-slow: 0ms;
+  --motion-stagger: 0ms;
+  --motion-press: 0ms;
+  --motion-rise: 0px;
+  --motion-spin: 0ms;
+  --press-scale: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root {
+  :root:not([data-motion='full']) {
     --motion-instant: 0ms;
     --motion-quick: 0ms;
     --motion-normal: 0ms;
@@ -175,6 +190,7 @@
   --color-primary-wash: color-mix(in srgb, var(--color-primary) var(--wash-alpha), transparent);
   --color-secondary-wash: color-mix(in srgb, var(--color-secondary) var(--wash-alpha), transparent);
   --color-urgent-wash: color-mix(in srgb, var(--color-urgent) var(--wash-alpha), transparent);
+  --color-urgent-wash-strong: color-mix(in srgb, var(--color-urgent) var(--wash-alpha-strong), transparent);
   --color-secondary-wash-strong: color-mix(in srgb, var(--color-secondary) var(--wash-alpha-strong), transparent);
   --color-primary-wash-strong: color-mix(in srgb, var(--color-primary) var(--wash-alpha-strong), transparent);
   --color-primary-hover: color-mix(in srgb, var(--color-primary) 88%, var(--color-ink));

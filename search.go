@@ -51,6 +51,7 @@ func (a *App) Search(query string, topK int) ([]vectorstore.SearchResult, error)
 			result.Text,
 		)
 	}
+	a.recordSearch(query)
 	return results, nil
 }
 

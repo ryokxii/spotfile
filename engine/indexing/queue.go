@@ -170,6 +170,9 @@ func (ix *Indexer) process(batch []task) {
 
 	// Replace prior chunks for these paths, then re-index.
 	ix.store.RemoveDocs(paths)
+	// Stat before embedding, so an edit made meanwhile is caught next time; record
+	// after, so a store saved mid-batch never marks an unembedded file current.
+	stamps := stampsOf(paths)
 	chunks := EmbedFiles(ix.ctx, ix.model, paths)
 	for chunk := range chunks {
 		ix.store.Add(chunk)
@@ -182,6 +185,10 @@ func (ix *Indexer) process(batch []task) {
 		if onChunk != nil {
 			onChunk(chunk, total)
 		}
+	}
+
+	if ix.ctx == nil || ix.ctx.Err() == nil {
+		ix.store.AdoptStamps(stamps)
 	}
 
 	// One task processed per path (regardless of chunks produced). When a job's

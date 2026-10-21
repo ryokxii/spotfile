@@ -53,6 +53,14 @@ a {
   outline-offset: 2px;
 }
 
+/* One line, cut with "…" when it doesn't fit; pair with a title holding the full text. */
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

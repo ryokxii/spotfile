@@ -31,8 +31,19 @@ describe('statusLine', () => {
   })
 
   it('mentions the watched folder by name', () => {
-    expect(statusLine({ ...ready, documents: 3, chunks: 30, watching: true, folder: '/Users/z/Notes' }).text).toBe(
+    expect(statusLine({ ...ready, documents: 3, chunks: 30, watching: true, folders: [{ path: '/Users/z/Notes', files: 3 }] }).text).toBe(
       '3 files · 30 chunks · watching Notes',
+    )
+  })
+
+  it('counts the watched folders when there are several', () => {
+    const folders = [
+      { path: '/Users/z/Notes', files: 2 },
+      { path: '/Users/z/Work', files: 1 },
+      { path: '/Users/z/Papers', files: 0 },
+    ]
+    expect(statusLine({ ...ready, documents: 3, chunks: 30, watching: true, folders }).text).toBe(
+      '3 files · 30 chunks · watching 3 folders',
     )
   })
 
