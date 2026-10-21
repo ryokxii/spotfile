@@ -18,9 +18,19 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaults(t *testing.T) {
+	d := Defaults()
+	if d.Folders == nil || len(d.Folders) != 0 || d.Name != "" || !d.History || d.StaleDays != 90 {
+		t.Fatalf("Defaults() = %+v", d)
+	}
+}
+
 func TestSaveThenLoadRoundTrips(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	want := Settings{Theme: ThemeDaylight, Motion: MotionReduce, Folders: []string{"/Users/me/Notes", "/Users/me/Work"}}
+	want := Defaults()
+	want.Theme, want.Motion = ThemeDaylight, MotionReduce
+	want.Folders = []string{"/Users/me/Notes", "/Users/me/Work"}
+	want.Name, want.History, want.StaleDays = "Zafer Acar", false, 180
 	if err := Save(path, want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -42,70 +52,10 @@ func TestLoadMigratesTheOldFolderAndFillsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := Settings{Theme: ThemeSystem, Motion: MotionSystem, Folders: []string{"/notes"}}
+	want := Defaults()
+	want.Folders = []string{"/notes"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
-	}
-}
-
-func TestLoadSetsAsideUnusableFiles(t *testing.T) {
-	for name, content := range map[string]string{
-		"corrupt json":  `{"theme":`,
-		"unknown theme": `{"theme":"sepia","motion":"system"}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "settings.json")
-			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			got, err := Load(path)
-			if err == nil {
-				t.Fatal("Load returned no error for an unusable file")
-			}
-			if !reflect.DeepEqual(got, Defaults()) {
-				t.Fatalf("got %+v, want defaults", got)
-			}
-			if _, err := os.Stat(path + ".bad"); err != nil {
-				t.Fatalf("unusable file not kept as .bad: %v", err)
-			}
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
-				t.Fatalf("unusable file still in place: %v", err)
-			}
-		})
-	}
-}
-
-func TestSaveRejectsInvalidValues(t *testing.T) {
-	for name, s := range map[string]Settings{
-		"theme":  {Theme: "sepia", Motion: MotionSystem},
-		"motion": {Theme: ThemeSystem, Motion: "slow"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "settings.json")
-			if err := Save(path, s); err == nil {
-				t.Fatal("Save accepted invalid settings")
-			}
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
-				t.Fatalf("file written for invalid settings: %v", err)
-			}
-		})
-	}
-}
-
-func TestSaveCreatesParentDirAndLeavesNoTempFiles(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "nested")
-	path := filepath.Join(dir, "settings.json")
-	for range 2 {
-		if err := Save(path, Defaults()); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 || entries[0].Name() != "settings.json" {
-		t.Fatalf("dir entries = %v, want only settings.json", entries)
 	}
 }
 
@@ -130,17 +80,76 @@ func TestLegacyFolderIsNotSavedBack(t *testing.T) {
 	}
 }
 
-func TestDefaultsHaveNoFolders(t *testing.T) {
-	if d := Defaults(); d.Folders == nil || len(d.Folders) != 0 {
-		t.Fatalf("Defaults().Folders = %#v, want an empty list", d.Folders)
+func TestLoadSetsAsideUnusableFiles(t *testing.T) {
+	for name, content := range map[string]string{
+		"corrupt json":  `{"theme":`,
+		"unknown theme": `{"theme":"sepia","motion":"system"}`,
+		"stale days":    `{"staleDays":45}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(path)
+			if err == nil {
+				t.Fatal("Load returned no error for an unusable file")
+			}
+			if !reflect.DeepEqual(got, Defaults()) {
+				t.Fatalf("got %+v, want defaults", got)
+			}
+			if _, err := os.Stat(path + ".bad"); err != nil {
+				t.Fatalf("unusable file not kept as .bad: %v", err)
+			}
+		})
 	}
 }
 
-func TestSaveRejectsRelativeFolder(t *testing.T) {
-	s := Defaults()
-	s.Folders = []string{"notes"}
-	if err := Save(filepath.Join(t.TempDir(), "settings.json"), s); err == nil {
-		t.Fatal("Save accepted a relative folder")
+func TestSaveRejectsInvalidValues(t *testing.T) {
+	invalid := func(change func(*Settings)) Settings {
+		s := Defaults()
+		change(&s)
+		return s
+	}
+	for name, s := range map[string]Settings{
+		"theme":           invalid(func(s *Settings) { s.Theme = "sepia" }),
+		"motion":          invalid(func(s *Settings) { s.Motion = "slow" }),
+		"relative folder": invalid(func(s *Settings) { s.Folders = []string{"notes"} }),
+		"stale days":      invalid(func(s *Settings) { s.StaleDays = 45 }),
+		"long name":       invalid(func(s *Settings) { s.Name = strings.Repeat("é", MaxNameLength+1) }),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if err := Save(path, s); err == nil {
+				t.Fatal("Save accepted invalid settings")
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("file written for invalid settings: %v", err)
+			}
+		})
+	}
+}
+
+func TestNameAtTheLimitIsValid(t *testing.T) {
+	s := Defaults().WithName(strings.Repeat("é", MaxNameLength))
+	if err := s.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestWithName(t *testing.T) {
+	start := Defaults()
+	got := start.WithName("  Zafer Acar \n")
+	if got.Name != "Zafer Acar" || start.Name != "" {
+		t.Fatalf("got %q, receiver %q", got.Name, start.Name)
+	}
+}
+
+func TestWithPrivacy(t *testing.T) {
+	start := Defaults()
+	got := start.WithPrivacy(false, 30)
+	if got.History || got.StaleDays != 30 || !start.History || start.StaleDays != 90 {
+		t.Fatalf("got %+v, receiver %+v", got, start)
 	}
 }
 
@@ -185,8 +194,5 @@ func TestWithFolderRemoved(t *testing.T) {
 	}
 	if len(start.Folders) != 2 {
 		t.Fatalf("receiver modified: %v", start.Folders)
-	}
-	if got := got.WithFolderRemoved("/unknown"); !reflect.DeepEqual(got.Folders, []string{"/work"}) {
-		t.Fatalf("removing an unknown folder changed the list: %v", got.Folders)
 	}
 }

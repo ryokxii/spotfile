@@ -2,13 +2,12 @@
 package settings
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
+	"strings"
+	"unicode/utf8"
 
+	"spotfile/engine/jsonfile"
 	"spotfile/engine/pathutil"
 )
 
@@ -20,21 +19,39 @@ const (
 	MotionSystem = "system"
 	MotionReduce = "reduce"
 	MotionFull   = "full"
+
+	// MaxNameLength is the longest display name, in characters.
+	MaxNameLength = 60
+	// DefaultStaleDays is how long a file goes unused before Free up space lists it.
+	DefaultStaleDays = 90
 )
+
+// StaleDayChoices are the thresholds offered in Settings → Privacy.
+var StaleDayChoices = []int{30, 90, 180}
 
 // Settings is everything Spotfile remembers between launches.
 type Settings struct {
-	Theme   string   `json:"theme"`
-	Motion  string   `json:"motion"`
-	Folders []string `json:"folders"` // indexed folders, in the order they were added
+	Theme     string   `json:"theme"`
+	Motion    string   `json:"motion"`
+	Folders   []string `json:"folders"`   // indexed folders, in the order they were added
+	Name      string   `json:"name"`      // display name; "" when unset
+	History   bool     `json:"history"`   // remember searches and opened files
+	StaleDays int      `json:"staleDays"` // one of StaleDayChoices
 }
 
-// Defaults follow the OS for appearance and have no folders.
+// Defaults follow the OS for appearance, have no folders or name, keep
+// history, and list files unused for 90 days.
 func Defaults() Settings {
-	return Settings{Theme: ThemeSystem, Motion: MotionSystem, Folders: []string{}}
+	return Settings{
+		Theme:     ThemeSystem,
+		Motion:    MotionSystem,
+		Folders:   []string{},
+		History:   true,
+		StaleDays: DefaultStaleDays,
+	}
 }
 
-// Validate reports an unknown theme or motion value.
+// Validate reports a value Spotfile can't use.
 func (s Settings) Validate() error {
 	switch s.Theme {
 	case ThemeSystem, ThemeNocturne, ThemeDaylight:
@@ -51,7 +68,22 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("folder %q is not an absolute path", f)
 		}
 	}
+	if utf8.RuneCountInString(s.Name) > MaxNameLength {
+		return fmt.Errorf("name is longer than %d characters", MaxNameLength)
+	}
+	if !validStaleDays(s.StaleDays) {
+		return fmt.Errorf("stale after %d days isn't one of %v", s.StaleDays, StaleDayChoices)
+	}
 	return nil
+}
+
+func validStaleDays(days int) bool {
+	for _, c := range StaleDayChoices {
+		if c == days {
+			return true
+		}
+	}
+	return false
 }
 
 // WithFolderAdded returns a copy that also indexes dir, and whether the list
@@ -88,25 +120,31 @@ func (s Settings) WithFolderRemoved(dir string) Settings {
 	return s
 }
 
+// WithName returns a copy with the display name, trimmed.
+func (s Settings) WithName(name string) Settings {
+	s.Name = strings.TrimSpace(name)
+	return s
+}
+
+// WithPrivacy returns a copy with the history switch and the stale threshold.
+func (s Settings) WithPrivacy(history bool, staleDays int) Settings {
+	s.History = history
+	s.StaleDays = staleDays
+	return s
+}
+
 // Load reads settings from path. A missing file gives Defaults. A file that
 // can't be used is renamed to path+".bad" and Defaults are returned with an
 // error describing the problem, so a bad file never stops the app starting.
 func Load(path string) (Settings, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return Defaults(), nil
-	}
-	if err != nil {
-		return Defaults(), setAside(path, err)
-	}
 	// Fields missing from the file keep their defaults. Files written before
 	// several folders were supported hold a single "folder".
 	file := struct {
 		Settings
 		Folder string `json:"folder"`
 	}{Settings: Defaults()}
-	if err := json.Unmarshal(data, &file); err != nil {
-		return Defaults(), setAside(path, fmt.Errorf("decode settings: %w", err))
+	if err := jsonfile.Load(path, &file); err != nil {
+		return Defaults(), err
 	}
 	s := file.Settings
 	if s.Folders == nil {
@@ -116,48 +154,15 @@ func Load(path string) (Settings, error) {
 		s.Folders = []string{file.Folder}
 	}
 	if err := s.Validate(); err != nil {
-		return Defaults(), setAside(path, err)
+		return Defaults(), jsonfile.SetAside(path, err)
 	}
 	return s, nil
 }
 
-func setAside(path string, cause error) error {
-	if err := os.Rename(path, path+".bad"); err != nil {
-		return fmt.Errorf("%w (moving the file aside also failed: %v)", cause, err)
-	}
-	return fmt.Errorf("%w (moved to %s.bad)", cause, filepath.Base(path))
-}
-
-// Save validates s and writes it to path via a temp file and rename, so a
-// crash mid-write never leaves a truncated file.
+// Save validates s and writes it to path atomically.
 func Save(path string, s Settings) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode settings: %w", err)
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create settings dir: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".settings-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp settings: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write settings: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp settings: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("replace settings: %w", err)
-	}
-	return nil
+	return jsonfile.Save(path, s)
 }
