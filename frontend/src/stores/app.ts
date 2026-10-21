@@ -2,7 +2,7 @@
 // here; tests construct the stores directly with their own runtimes.
 
 import { derived } from 'svelte/store'
-import { ClearIndex, EngineStatus, GetSettings, IndexFolder, Search, SelectFolder, SetAppearance } from '../../wailsjs/go/main/App.js'
+import { ClearIndex, EngineStatus, GetSettings, IndexFolder, RemoveFolder, Search, SelectFolder, SetAppearance } from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import { createEngineStore } from './engine'
 import { createMotionStore } from './motion'
@@ -25,6 +25,7 @@ export const engine = createEngineStore({
   selectFolder: SelectFolder,
   indexFolder: IndexFolder,
   clearIndex: ClearIndex,
+  removeFolder: RemoveFolder,
 })
 
 export const search = createSearchStore({ search: Search })

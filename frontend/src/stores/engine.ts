@@ -4,12 +4,18 @@
 
 import { writable, type Readable } from 'svelte/store'
 
+// An indexed folder and how many of its files are in the index.
+export interface FolderStat {
+  path: string
+  files: number
+}
+
 export interface EngineStatus {
   ready: boolean
   error: string
   documents: number
   chunks: number
-  folder: string
+  folders: FolderStat[]
   indexBytes: number
 }
 
@@ -32,7 +38,7 @@ export interface EngineState {
   documents: number
   chunks: number
   indexBytes: number // size of the index file on disk
-  folder: string
+  folders: FolderStat[] // indexed folders, in the order they were added
 }
 
 export type EngineEvent =
@@ -59,7 +65,7 @@ export const initialEngineState: EngineState = {
   documents: 0,
   chunks: 0,
   indexBytes: 0,
-  folder: '',
+  folders: [],
 }
 
 export function reduce(state: EngineState, event: EngineEvent): EngineState {
@@ -75,7 +81,6 @@ export function reduce(state: EngineState, event: EngineEvent): EngineState {
         ...state,
         error: '', // indexing only starts once the engine is up
         indexError: '',
-        folder: event.dir || state.folder,
         indexing: { files: event.total, filesDone: 0, chunks: 0, chunksDone: 0, currentFile: '', seen: new Set() },
       }
     case 'index:prepared':
@@ -117,6 +122,7 @@ export interface EngineRuntime {
   selectFolder(): Promise<string>
   indexFolder(dir: string): Promise<void>
   clearIndex(): Promise<void>
+  removeFolder(dir: string): Promise<void>
 }
 
 export interface EngineStore extends Readable<EngineState> {
@@ -125,6 +131,8 @@ export interface EngineStore extends Readable<EngineState> {
   chooseFolder(): Promise<void>
   // Empties the index; resolves to an error message, or '' on success.
   clearIndex(): Promise<string>
+  // Stops indexing a folder; resolves to an error message, or '' on success.
+  removeFolder(dir: string): Promise<string>
 }
 
 interface ProgressPayload {
@@ -201,6 +209,14 @@ export function createEngineStore(runtime: EngineRuntime): EngineStore {
         await runtime.indexFolder(dir)
       } catch (err) {
         dispatch({ type: 'index:error', message: messageOf(err) })
+      }
+    },
+    async removeFolder(dir) {
+      try {
+        await runtime.removeFolder(dir)
+        return ''
+      } catch (err) {
+        return messageOf(err)
       }
     },
     async clearIndex() {

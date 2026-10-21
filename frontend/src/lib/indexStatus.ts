@@ -37,6 +37,7 @@ export function statusLine(s: EngineState): StatusLine {
   if (s.documents === 0) return { tone: 'neutral', text: 'No folder indexed yet', progress: null }
 
   const parts = [count(s.documents, 'file'), count(s.chunks, 'chunk')]
-  if (s.watching && s.folder) parts.push(`watching ${filename(s.folder)}`)
+  if (s.watching && s.folders.length === 1) parts.push(`watching ${filename(s.folders[0].path)}`)
+  else if (s.watching && s.folders.length > 1) parts.push(`watching ${s.folders.length} folders`)
   return { tone: 'neutral', text: parts.join(' · '), progress: null }
 }

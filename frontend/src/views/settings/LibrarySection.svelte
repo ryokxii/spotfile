@@ -1,6 +1,8 @@
 <script lang="ts">
-  // The indexed folder, what the index holds, and clearing it.
+  // The indexed folders, what the index holds, and clearing it.
   import { formatBytes, truncateMiddle } from '../../lib/format'
+  import { filename } from '../../lib/path'
+  import type { FolderStat } from '../../stores/engine'
   import { engine } from '../../stores/app'
   import Button from '../../ui/Button.svelte'
   import ConfirmDialog from '../../ui/ConfirmDialog.svelte'
@@ -12,10 +14,14 @@
   let confirming = false
   let clearing = false
   let clearError = ''
+  let removing: FolderStat | null = null // folder awaiting confirmation
+  let removeError = ''
+
+  const fileCount = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'file' : 'files'}`
 
   $: indexing = $engine.indexing !== null
-  $: hasFolder = $engine.folder !== ''
-  $: files = `${$engine.documents.toLocaleString()} ${$engine.documents === 1 ? 'file' : 'files'}`
+  $: hasFolder = $engine.folders.length > 0
+  $: files = fileCount($engine.documents)
   $: figures = [
     { label: $engine.documents === 1 ? 'file' : 'files', value: $engine.documents.toLocaleString() },
     { label: $engine.chunks === 1 ? 'chunk' : 'chunks', value: $engine.chunks.toLocaleString() },
@@ -28,17 +34,31 @@
     clearError = await engine.clearIndex()
     clearing = false
   }
+
+  async function remove() {
+    if (!removing) return
+    const dir = removing.path
+    removing = null
+    removeError = await engine.removeFolder(dir)
+  }
 </script>
 
 <SettingsSection title="Library">
-  <SettingRow label="Indexed folder" hint={hasFolder ? '' : 'No folder yet'}>
-    <svelte:fragment slot="detail">
-      {#if hasFolder}
-        <span class="path" title={$engine.folder}>{truncateMiddle($engine.folder, PATH_MAX)}</span>
-      {/if}
-    </svelte:fragment>
-    <Button disabled={indexing} on:click={engine.chooseFolder}>{hasFolder ? 'Change…' : 'Choose…'}</Button>
+  <SettingRow label="Indexed folders" hint={hasFolder ? 'Search covers every folder listed' : 'No folder yet'}>
+    <Button disabled={indexing} on:click={engine.chooseFolder}>Add folder…</Button>
   </SettingRow>
+
+  {#if hasFolder}
+    <ul class="folders">
+      {#each $engine.folders as folder (folder.path)}
+        <li class="folder">
+          <span class="path" title={folder.path}>{truncateMiddle(folder.path, PATH_MAX)}</span>
+          <span class="count">{fileCount(folder.files)}</span>
+          <Button disabled={indexing} on:click={() => (removing = folder)}>Remove…</Button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
   <dl class="figures">
     {#each figures as figure}
@@ -56,8 +76,8 @@
     <Button variant="destructive" disabled={indexing || clearing} on:click={() => (confirming = true)}>Clear index…</Button>
   </SettingRow>
 
-  {#if clearError || $engine.indexError}
-    <p class="error" role="alert">{clearError || $engine.indexError}</p>
+  {#if removeError || clearError || $engine.indexError}
+    <p class="error" role="alert">{removeError || clearError || $engine.indexError}</p>
   {/if}
 </SettingsSection>
 
@@ -71,10 +91,41 @@
   <p>This removes {files} from search. Your files and models stay on disk. To search again, index a folder.</p>
 </ConfirmDialog>
 
+<ConfirmDialog
+  open={removing !== null}
+  title={`Remove ${removing ? filename(removing.path) : ''} from search?`}
+  confirmLabel="Remove folder"
+  on:confirm={remove}
+  on:cancel={() => (removing = null)}
+>
+  <p>Its {fileCount(removing?.files ?? 0)} leave the index. The files stay on disk, and you can add the folder again later.</p>
+</ConfirmDialog>
+
 <style>
+  .folders {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding-bottom: var(--space-sm);
+  }
+
+  .folder {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .count {
+    flex-shrink: 0;
+    font-size: var(--text-small-size);
+    color: var(--color-ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
   .path {
-    display: block;
-    margin-top: var(--space-xs);
+    flex: 1;
+    min-width: 0;
     padding: var(--space-xs) var(--space-sm);
     border-radius: var(--radius-xs);
     border: 1px solid var(--color-hairline);

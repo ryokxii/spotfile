@@ -15,7 +15,7 @@
   $: canSearch = $engine.ready && $engine.documents > 0
   $: searching = $search.phase !== 'idle'
   $: placeholder = canSearch ? 'Search your files…' : hasIndex ? 'Indexing — search opens when it finishes…' : 'Index a folder to start searching…'
-  $: folderTitle = $engine.folder ? 'Change folder' : 'Choose a folder to index'
+  $: folderTitle = $engine.folders.length > 0 ? 'Add folder' : 'Choose a folder to index'
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && $search.preview) search.close()
@@ -55,7 +55,7 @@
         {#if $search.results.length > 0}
           <ResultList results={$search.results} selectedKey={$search.preview?.key ?? null} on:open={(e) => search.open(e.detail)} />
         {:else}
-          <EmptyState eyebrow="No matches" line="Nothing close to that yet." action="Change folder" on:click={engine.chooseFolder} />
+          <EmptyState eyebrow="No matches" line="Nothing close to that yet." action="Add folder" on:click={engine.chooseFolder} />
         {/if}
       </div>
     {/if}
