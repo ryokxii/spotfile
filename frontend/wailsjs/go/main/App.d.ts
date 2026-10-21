@@ -4,11 +4,17 @@ import {main} from '../models';
 import {settings} from '../models';
 import {vectorstore} from '../models';
 
+export function ClearHistory():Promise<void>;
+
 export function ClearIndex():Promise<void>;
 
 export function EngineStatus():Promise<main.EngineStatus>;
 
+export function ForgetOpened(arg1:string):Promise<void>;
+
 export function GenerateAnswer(arg1:string,arg2:number):Promise<string>;
+
+export function GetDashboard():Promise<main.Dashboard>;
 
 export function GetSettings():Promise<settings.Settings>;
 
@@ -18,14 +24,24 @@ export function IndexFolder(arg1:string):Promise<void>;
 
 export function InitEngine(arg1:main.EngineConfig):Promise<void>;
 
+export function MoveToTrash(arg1:string):Promise<void>;
+
 export function ReadFileAsBase64(arg1:string):Promise<string>;
 
+export function RecordOpened(arg1:string):Promise<void>;
+
 export function RemoveFolder(arg1:string):Promise<void>;
+
+export function RemoveFromIndex(arg1:string):Promise<void>;
 
 export function Search(arg1:string,arg2:number):Promise<Array<vectorstore.SearchResult>>;
 
 export function SelectFolder():Promise<string>;
 
 export function SetAppearance(arg1:string,arg2:string):Promise<void>;
+
+export function SetPrivacy(arg1:boolean,arg2:number):Promise<void>;
+
+export function SetProfile(arg1:string):Promise<void>;
 
 export function StoreSize():Promise<number>;
