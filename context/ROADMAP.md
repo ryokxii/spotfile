@@ -38,6 +38,7 @@
 - [x] **Bridge Frontend & Backend** — Go methods bound via Wails; long work reports progress through events, each with a frontend listener
 - [x] **PDF.js Viewer** — docked preview with page jumping and match highlighting; text and Markdown viewers alongside
 - [x] **Progressive Status UI** — live indexing status from `index:*` and `watcher:*` events; `EngineStatus` lets a freshly loaded UI catch up
+- [x] **Readable JSON and YAML** — the viewer highlights and folds `.json`, `.jsonc`, `.yaml` and `.yml` (line numbers, Collapse/Expand all, minified JSON pretty-printed); search highlights still land. Spec: `docs/superpowers/specs/2026-10-21-json-yaml-viewer-design.md`
 - [x] **Design system** — Nocturne and Daylight themes as CSS tokens (`context/DESIGN.md`, `styles/tokens.css`) with an automated contrast test; bundled Fraunces + Work Sans
 
 ---

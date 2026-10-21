@@ -12,28 +12,28 @@
 
 ### Task 1: `lib/structured.ts`
 
-- [ ] Write `lib/structured.test.ts` covering the cases listed under *Testing* in the spec; run it and see it fail on the missing module.
-- [ ] Implement `structuredKindFor`, `formatJson`, `tokenizeJson`, `tokenizeYaml`, `jsonFolds`, `yamlFolds`, `parseStructured`.
-- [ ] `npx vitest run src/lib/structured.test.ts` passes; commit `feat(viewer): tokenize and fold JSON and YAML`.
+- [x] Write `lib/structured.test.ts` covering the cases listed under *Testing* in the spec; run it and see it fail on the missing module.
+- [x] Implement `structuredKindFor`, `formatJson`, `tokenizeJson`, `tokenizeYaml`, `jsonFolds`, `yamlFolds`, `parseStructured`.
+- [x] `npx vitest run src/lib/structured.test.ts` passes; commit `feat(viewer): tokenize and fold JSON and YAML`.
 
 ### Task 2: Whitespace-insensitive highlight
 
-- [ ] Write `lib/textHighlight.test.ts`: a pretty-printed `<pre>` and a whitespace-free needle → `locateChunkRange` returns `null` by default and the full range with `{ ignoreWhitespace: true }`; see it fail.
-- [ ] Add the option to `normalize`, `normalizeNeedle`, `locateChunkRange` and `highlightAndScroll`; export `locateChunkRange`.
-- [ ] Tests pass; commit `feat(viewer): optional whitespace-insensitive search highlight`.
+- [x] Write `lib/textHighlight.test.ts`: a pretty-printed `<pre>` and a whitespace-free needle → `locateChunkRange` returns `null` by default and the full range with `{ ignoreWhitespace: true }`; see it fail.
+- [x] Add the option to `normalize`, `normalizeNeedle`, `locateChunkRange` and `highlightAndScroll`; export `locateChunkRange`.
+- [x] Tests pass; commit `feat(viewer): optional whitespace-insensitive search highlight`.
 
 ### Task 3: `StructuredView`
 
-- [ ] Write `viewers/StructuredView.test.ts` (token classes, toggle, collapse/expand all, DOM text); see it fail.
-- [ ] Implement `viewers/StructuredView.svelte`.
-- [ ] Tests pass; commit `feat(viewer): collapsible highlighted source view`.
+- [x] Write `viewers/StructuredView.test.ts` (token classes, toggle, collapse/expand all, DOM text); see it fail.
+- [x] Implement `viewers/StructuredView.svelte`.
+- [x] Tests pass; commit `feat(viewer): collapsible highlighted source view`.
 
 ### Task 4: Wire into `TextViewer`
 
-- [ ] For structured files (by extension, under 2 MB) render `StructuredView` with Collapse all / Expand all in the toolbar; expand all and highlight with `ignoreWhitespace` on search results.
-- [ ] `npm run check`, `npx vitest run`, `npm run build`; commit `feat(viewer): JSON and YAML open highlighted and collapsible`.
+- [x] For structured files (by extension, under 2 MB) render `StructuredView` with Collapse all / Expand all in the toolbar; expand all and highlight with `ignoreWhitespace` on search results.
+- [x] `npm run check`, `npx vitest run`, `npm run build`; commit `feat(viewer): JSON and YAML open highlighted and collapsible`.
 
 ### Task 5: Verify and document
 
-- [ ] `wails dev` with `~/.spotfile` backed up and restored: minified JSON, `.jsonc`, nested YAML, both themes, a search result highlight.
-- [ ] ROADMAP note; commit `docs: JSON and YAML viewer`.
+- [x] `wails dev` with `~/.spotfile` backed up and restored: minified JSON, nested YAML, both themes, a search result highlight. (`.jsonc` comments are covered by unit tests only.)
+- [x] ROADMAP note; commit `docs: JSON and YAML viewer`.
