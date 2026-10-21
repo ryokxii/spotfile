@@ -2,9 +2,9 @@ package vectorstore
 
 import (
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
+
+	"spotfile/engine/pathutil"
 )
 
 // Stamp identifies the version of a file that was indexed. Comparing it with
@@ -56,9 +56,7 @@ func (vs *VectorStore) Stamps() map[string]Stamp {
 // indexed paths were removed. A sibling that merely shares the prefix
 // ("/a/bc" for "/a/b") is kept.
 func (vs *VectorStore) RemoveUnder(path string) int {
-	path = filepath.Clean(path)
-	prefix := path + string(filepath.Separator)
-	under := func(p string) bool { return p == path || strings.HasPrefix(p, prefix) }
+	under := func(p string) bool { return pathutil.Within(p, path) }
 
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
