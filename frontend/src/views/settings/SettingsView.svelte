@@ -3,6 +3,7 @@
   import { duration } from '../../lib/motion'
   import AppearanceSection from './AppearanceSection.svelte'
   import LibrarySection from './LibrarySection.svelte'
+  import PrivacySection from './PrivacySection.svelte'
 </script>
 
 <div class="settings-view" in:fade={{ duration: duration('normal') }}>
@@ -10,6 +11,7 @@
     <h1 class="display">Settings</h1>
     <AppearanceSection />
     <LibrarySection />
+    <PrivacySection />
   </div>
 </div>
 
