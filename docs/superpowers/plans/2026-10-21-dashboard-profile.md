@@ -3337,7 +3337,7 @@ Expected: FAIL, `Failed to resolve import "./DashboardSearch.svelte"`.
   export let placeholder = 'Search your files…'
 
   const dispatch = createEventDispatcher<{ search: string }>()
-  const shortcut = navigator.platform.toUpperCase().includes('MAC') ? '⌘K' : 'Ctrl K'
+  const shortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl K'
   let input: HTMLInputElement
   let query = ''
 
