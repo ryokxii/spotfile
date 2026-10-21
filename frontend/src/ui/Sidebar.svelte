@@ -2,9 +2,11 @@
   import { location } from 'svelte-spa-router'
   import type { Destination } from '../routes'
   import NavItem from './NavItem.svelte'
+  import ProfileButton from './ProfileButton.svelte'
 
   export let destinations: Destination[]
   export let compact = false
+  export let name = ''
 </script>
 
 <nav class="sidebar" class:compact aria-label="Main">
@@ -24,6 +26,10 @@
       </li>
     {/each}
   </ul>
+
+  <div class="profile">
+    <ProfileButton {name} {compact} selected={$location === '/profile'} />
+  </div>
 </nav>
 
 <style>
@@ -71,6 +77,11 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-xxs);
+    width: 100%;
+  }
+
+  .profile {
+    margin-top: auto;
     width: 100%;
   }
 </style>

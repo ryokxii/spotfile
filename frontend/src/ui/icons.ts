@@ -1,6 +1,6 @@
 // Stroke icons on a 20×20 grid, drawn in currentColor.
 
-export type IconName = 'search' | 'folder' | 'file' | 'close' | 'chevron-left' | 'chevron-right' | 'minus' | 'plus' | 'target' | 'settings'
+export type IconName = 'search' | 'folder' | 'file' | 'close' | 'chevron-left' | 'chevron-right' | 'minus' | 'plus' | 'target' | 'settings' | 'dashboard' | 'chat'
 
 export const ICONS: Record<IconName, string[]> = {
   search: ['M8.5 14a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11Z', 'M13 13l3.5 3.5'],
@@ -20,4 +20,6 @@ export const ICONS: Record<IconName, string[]> = {
     'M8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
     'M12 16a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
   ],
+  dashboard: ['M3.5 4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-6Z', 'M10.5 4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2Z', 'M10.5 10.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-5Z', 'M3.5 14.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1Z'],
+  chat: ['M4.5 4h11A1.5 1.5 0 0 1 17 5.5v7a1.5 1.5 0 0 1-1.5 1.5H10l-3.5 3v-3h-2A1.5 1.5 0 0 1 3 12.5v-7A1.5 1.5 0 0 1 4.5 4Z'],
 }

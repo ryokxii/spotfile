@@ -5,7 +5,7 @@
   import Router from 'svelte-spa-router'
   import { WindowFullscreen, WindowIsFullscreen, WindowUnfullscreen } from '../wailsjs/runtime/runtime.js'
   import { destinations, routes } from './routes'
-  import { engine, motion, search, theme } from './stores/app'
+  import { engine, motion, profile, search, theme } from './stores/app'
   import Sidebar from './ui/Sidebar.svelte'
 
   // DESIGN.md §7: full sidebar at ≥1180px, icon rail below. While a preview is
@@ -41,7 +41,7 @@
 <svelte:window bind:innerWidth={width} on:keydown={onKeydown} />
 
 <div class="shell" class:compact>
-  <Sidebar {destinations} {compact} />
+  <Sidebar {destinations} {compact} name={$profile.name} />
   <main class="view">
     <Router {routes} />
   </main>
