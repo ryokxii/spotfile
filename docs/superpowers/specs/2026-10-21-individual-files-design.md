@@ -31,3 +31,9 @@ Index individual files as well as folders, kept across restarts and in sync with
 - `indexing`: watcher action respects `accept`.
 - Frontend: engine store `files`, `chooseFiles`, `removeFile`; status line wording.
 - Manual (`wails dev`, `~/.spotfile` backed up and restored): add two files; edit one while running and while closed; delete one; add a folder containing a listed file; Remove…; restart.
+
+## Known gaps
+
+- A listed file deleted while Spotfile runs leaves the index at once (the watcher forgets it) but stays in the Library list until the next launch, when it is forgotten from settings too.
+- Chat has an **Add files** button beside the folder button rather than a menu; it does the same with less focus handling.
+
