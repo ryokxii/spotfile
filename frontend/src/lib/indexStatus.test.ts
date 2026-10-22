@@ -36,6 +36,16 @@ describe('statusLine', () => {
     )
   })
 
+  it.each([
+    [['/u/Notes'], ['/w/a.md', '/w/b.md', '/w/c.md'], 'watching Notes and 3 files'],
+    [[], ['/w/a.md', '/w/b.md'], 'watching 2 files'],
+    [[], ['/w/plan.md'], 'watching plan.md'],
+    [['/u/Notes', '/u/Work'], ['/w/a.md'], 'watching 2 folders and 1 file'],
+  ])('describes folders %j and files %j', (folderPaths, files, text) => {
+    const folders = folderPaths.map((path) => ({ path, files: 1 }))
+    expect(statusLine({ ...ready, documents: 3, chunks: 30, watching: true, folders, files }).text).toBe(`3 files · 30 chunks · ${text}`)
+  })
+
   it('counts the watched folders when there are several', () => {
     const folders = [
       { path: '/Users/z/Notes', files: 2 },

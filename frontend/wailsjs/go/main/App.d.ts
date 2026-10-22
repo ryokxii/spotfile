@@ -4,6 +4,8 @@ import {main} from '../models';
 import {settings} from '../models';
 import {vectorstore} from '../models';
 
+export function AddFiles(arg1:Array<string>):Promise<void>;
+
 export function ClearHistory():Promise<void>;
 
 export function ClearIndex():Promise<void>;
@@ -18,8 +20,6 @@ export function GetDashboard():Promise<main.Dashboard>;
 
 export function GetSettings():Promise<settings.Settings>;
 
-export function IndexFiles(arg1:Array<string>):Promise<void>;
-
 export function IndexFolder(arg1:string):Promise<void>;
 
 export function InitEngine(arg1:main.EngineConfig):Promise<void>;
@@ -30,11 +30,15 @@ export function ReadFileAsBase64(arg1:string):Promise<string>;
 
 export function RecordOpened(arg1:string):Promise<void>;
 
+export function RemoveFile(arg1:string):Promise<void>;
+
 export function RemoveFolder(arg1:string):Promise<void>;
 
 export function RemoveFromIndex(arg1:string):Promise<void>;
 
 export function Search(arg1:string,arg2:number):Promise<Array<vectorstore.SearchResult>>;
+
+export function SelectFiles():Promise<Array<string>>;
 
 export function SelectFolder():Promise<string>;
 

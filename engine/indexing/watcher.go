@@ -24,14 +24,17 @@ type FileWatcher struct {
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	indexer      *Indexer
-	onUpdated    func(path string) // called after a changed file is re-indexed; may be nil
+	onUpdated    func(path string)      // called after a changed file is re-indexed; may be nil
+	accept       func(path string) bool // whether a changed file belongs in the index; nil accepts all
 	closed       chan struct{}
 }
 
 // StartWatcher begins watching for filesystem changes on the given paths. Changed
 // files are re-indexed through the shared indexer at urgent priority, and
-// onUpdated (if set) hears about each one.
-func StartWatcher(ctx context.Context, paths []string, indexer *Indexer, onUpdated func(path string)) (*FileWatcher, error) {
+// onUpdated (if set) hears about each one. accept (if set) limits re-indexing
+// to the files it allows, since a watched folder can hold files that aren't
+// indexed — the siblings of an individually indexed file, or unsupported types.
+func StartWatcher(ctx context.Context, paths []string, indexer *Indexer, onUpdated func(path string), accept func(path string) bool) (*FileWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
@@ -54,6 +57,7 @@ func StartWatcher(ctx context.Context, paths []string, indexer *Indexer, onUpdat
 		cancel:       cancel,
 		indexer:      indexer,
 		onUpdated:    onUpdated,
+		accept:       accept,
 		closed:       make(chan struct{}),
 	}
 
@@ -122,14 +126,14 @@ const (
 )
 
 // actionFor decides what to do with a path once its events have settled.
-func actionFor(path string) watchAction {
+func actionFor(path string, accept func(string) bool) watchAction {
 	info, err := os.Stat(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return actForget
 	case err != nil:
 		return actIgnore
-	case info.Mode().IsRegular():
+	case info.Mode().IsRegular() && (accept == nil || accept(path)):
 		return actReindex
 	default:
 		return actIgnore
@@ -140,7 +144,7 @@ func actionFor(path string) watchAction {
 // replacing the file end here with the new file in place, so a remove followed
 // by a create is a plain re-index.
 func (fw *FileWatcher) settle(path string) {
-	switch actionFor(path) {
+	switch actionFor(path, fw.accept) {
 	case actReindex:
 		fw.reindexPath(path)
 	case actForget:

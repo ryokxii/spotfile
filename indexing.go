@@ -9,6 +9,7 @@ import (
 
 	"spotfile/engine/embedder"
 	"spotfile/engine/indexing"
+	"spotfile/engine/settings"
 	"spotfile/engine/vectorstore"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -36,17 +37,23 @@ func (a *App) IndexFolder(dir string) error {
 	return nil
 }
 
-func (a *App) indexFolder(dir string) error {
-	// If startup's init goroutine is still running, this blocks until it
-	// finishes. If it failed or hasn't started yet, we init here instead.
+// ensureEngine waits for startup's engine init if it is running, or starts the
+// engine here if it failed or hasn't started yet.
+func (a *App) ensureEngine() error {
 	a.engMu.Lock()
+	defer a.engMu.Unlock()
 	if a.embedder == nil {
 		if err := a.initEngineLocked(EngineConfig{}); err != nil {
-			a.engMu.Unlock()
 			return fmt.Errorf("engine init: %w", err)
 		}
 	}
-	a.engMu.Unlock()
+	return nil
+}
+
+func (a *App) indexFolder(dir string) error {
+	if err := a.ensureEngine(); err != nil {
+		return err
+	}
 
 	onDisk, err := indexing.Scan(dir, isIndexable)
 	if err != nil {
@@ -60,8 +67,8 @@ func (a *App) indexFolder(dir string) error {
 	if err := a.addFolder(dir); err != nil {
 		return err
 	}
-	paths := a.reconcileFolder(dir, onDisk)
-	a.watchFolders()
+	paths := a.reconcileRoot(dir, onDisk)
+	a.watchRoots()
 	if len(paths) == 0 {
 		a.indexMu.Unlock() // nothing new: no job will release it
 		return nil
@@ -171,22 +178,35 @@ func (a *App) progressHooks(onDone func(jobTotal int)) indexing.Hooks {
 	}
 }
 
-// restartWatcher (re)starts one recursive file watcher over the given folders,
-// wired to the shared indexer so changes re-index at urgent priority. With no
-// folders it only stops the current watcher.
-func (a *App) restartWatcher(folders []string) {
+// restartWatcher (re)starts one file watcher over the saved folders (whole
+// trees) and the parent folders of listed files, wired to the shared indexer so
+// changes re-index at urgent priority. Only files inside a saved root are
+// re-indexed. With nothing saved it only stops the current watcher.
+func (a *App) restartWatcher(folders, files []string) {
 	if a.watcher != nil {
 		_ = a.watcher.Stop()
 		a.watcher = nil
 	}
-	if len(folders) == 0 {
+	if len(folders)+len(files) == 0 {
 		return
 	}
 	var dirs []string
-	for _, f := range folders {
-		dirs = append(dirs, collectWatchDirs(f)...)
+	seen := make(map[string]bool)
+	add := func(dir string) {
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
 	}
-	watcher, err := indexing.StartWatcher(a.ctx, dirs, a.indexer, a.recordUpdate)
+	for _, f := range folders {
+		for _, d := range collectWatchDirs(f) {
+			add(d)
+		}
+	}
+	for _, f := range files {
+		add(filepath.Dir(f)) // the folder, not the file: editors replace files when saving
+	}
+	watcher, err := indexing.StartWatcher(a.ctx, dirs, a.indexer, a.recordUpdate, a.isIndexedPath)
 	if err != nil {
 		log.Printf("warning: failed to start watcher: %v", err)
 		return
@@ -210,22 +230,56 @@ func collectWatchDirs(root string) []string {
 	return dirs
 }
 
-// IndexFiles enqueues an explicit set of files at high priority. De-duplication,
-// persistence, and progress events are handled by the shared indexer.
-func (a *App) IndexFiles(paths []string) error {
-	if a.indexer == nil {
-		return fmt.Errorf("engine not initialised — call InitEngine first")
+// AddFiles indexes individual files and keeps them across restarts. Files
+// that are missing or of an unsupported type are skipped; a file inside an
+// indexed folder is already covered. Like IndexFolder it returns at once and
+// reports progress through events.
+func (a *App) AddFiles(paths []string) error {
+	if !a.indexMu.TryLock() {
+		return fmt.Errorf("indexing is already in progress")
 	}
-	if len(paths) == 0 {
+	go func() {
+		if err := a.addFiles(paths); err != nil {
+			a.indexMu.Unlock() // enqueue never happened; release now
+			log.Printf("index: add files failed: %v", err)
+			wailsruntime.EventsEmit(a.ctx, "index:error", err.Error())
+		}
+		// On success the lock is released by the enqueued job's OnDone hook.
+	}()
+	return nil
+}
+
+func (a *App) addFiles(paths []string) error {
+	if err := a.ensureEngine(); err != nil {
+		return err
+	}
+	var toIndex []string
+	added := 0
+	for _, raw := range paths {
+		path := filepath.Clean(raw)
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || !isIndexable(path) {
+			log.Printf("index: skipping %q: not a supported file", path)
+			continue
+		}
+		added++
+		add := func(s settings.Settings) settings.Settings {
+			next, _ := s.WithFileAdded(path)
+			return next
+		}
+		if err := a.updateSettings(add); err != nil {
+			return err
+		}
+		toIndex = append(toIndex, a.reconcileRoot(path, map[string]vectorstore.Stamp{path: vectorstore.StampOf(info)})...)
+	}
+	if added == 0 {
+		return fmt.Errorf("none of the selected files can be indexed")
+	}
+	a.watchRoots()
+	if len(toIndex) == 0 {
+		a.indexMu.Unlock() // nothing new: no job will release it
 		return nil
 	}
-	log.Printf("index: enqueue files=%d", len(paths))
-	items := make([]indexing.PathPriority, len(paths))
-	for i, p := range paths {
-		items[i] = indexing.PathPriority{Path: p, Priority: indexing.PriorityHigh}
-	}
-	a.indexer.Enqueue(items, a.progressHooks(func(jobTotal int) {
-		log.Printf("index: complete chunks=%d files=%d", jobTotal, len(paths))
-	}))
-	return nil
+	log.Printf("index: adding files=%d", len(toIndex))
+	return a.enqueueIndexJob("", toIndex)
 }
