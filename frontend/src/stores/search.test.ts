@@ -81,6 +81,12 @@ describe('createSearchStore', () => {
     search.reset()
     expect(get(search)).toMatchObject({ phase: 'idle', query: '', results: [], preview: null })
   })
+  it('reports a file opened in the preview', () => {
+    const opened = vi.fn()
+    const search = createSearchStore({ search: async () => [], opened })
+    search.open({ docPath: '/n/a.md', chunkIdx: 0, pageNum: 0, text: 'alpha', score: 1 })
+    expect(opened).toHaveBeenCalledWith('/n/a.md')
+  })
 })
 
 describe('resultKey', () => {

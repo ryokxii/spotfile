@@ -22,14 +22,13 @@ All choices persist across restarts.
 - Multiple indexed folders.
 - Engine info or editing model/server paths.
 - Clearing chat history (arrives with chat sessions, piece 4).
-- Catching up on file changes made while the app was closed (see *Known gaps*).
 
 ## Decisions
 
 | Question | Decision |
 |---|---|
 | What "Clear index" deletes | `store.gob` and the in-memory index only. Models, saved folder and watcher are untouched. |
-| Folder model | One folder. Choosing a different folder empties the index first. |
+| Folder model | ~~One folder. Choosing a different folder empties the index first.~~ **Superseded 2026-10-21:** several folders, added and removed independently. See *Multiple folders*. |
 | Persistence | One `~/.spotfile/settings.json`, owned by Go. |
 | Layout | Single-column list: Appearance section, then Library section. |
 
@@ -115,6 +114,50 @@ func Save(path string, s Settings) error
 |---|---|---|
 | `index:cleared` | new | none |
 
+## Keeping the index in sync
+
+*Added 2026-10-21 after a bug report: entries for files from a deleted or previously indexed folder stayed in the index, and moving a document left its old path searchable.*
+
+**Root cause.** Entries were only ever removed for a path that was about to be indexed again (`Indexer.process`). Indexing a folder only added files, the watcher ignored deletes and renames, and startup loaded `store.gob` without checking it.
+
+**Rule.** Compare what is on disk with what is indexed: drop entries whose file is gone, index files that are new or whose modification time or size changed.
+
+### `vectorstore`
+
+- `type Stamp struct { ModTime time.Time; Size int64 }`. The store keeps one per indexed path (`stamps map[string]Stamp`, saved in `storeFile.Stamps`). `formatVersion` stays 2: gob leaves the field empty when reading an older file, so existing indexes load without a rebuild.
+- `SetStamp(path, Stamp)`, `AdoptStamps(map[string]Stamp)`, `Stamps() map[string]Stamp` (every indexed path; the zero `Stamp` when none is recorded), `SavedAt() time.Time` (modification time of the store file, zero when absent).
+- `RemoveDocs` and `Clear` also drop stamps.
+- `RemoveUnder(path string) int` removes `path` and everything below it (`path + separator` prefix, so `/a/b` never touches `/a/bc`) and returns how many documents went.
+
+### `indexing`
+
+- `Scan(dir string, include func(string) bool) (map[string]vectorstore.Stamp, error)`: walks `dir`, unreadable entries skipped.
+- `Reconcile(onDisk, indexed map[string]vectorstore.Stamp, savedAt time.Time) SyncPlan` with `SyncPlan{Index, Remove []string; Adopt map[string]vectorstore.Stamp}`, both slices sorted:
+  - indexed but not on disk → `Remove`;
+  - on disk but not indexed → `Index`;
+  - both, with a recorded stamp → `Index` when the modification time or size differs;
+  - both, without a stamp (an index from before this change) → `Index` when the file was modified after `savedAt`, otherwise `Adopt` its current stamp so the next launch compares exactly.
+- `MissingPaths(paths []string) []string`: paths that no longer exist as regular files.
+- The indexer stamps each path it processes (`os.Stat` before embedding). A file that can't be stat'ed gets no stamp; its old chunks were already removed.
+- `Indexer.Forget(path) int`: `store.RemoveUnder(path)`, persisting when anything was removed.
+- **Watcher:** reacts to remove and rename as well as write and create, through the same 2-second debounce. When the timer fires it checks the path: a regular file is re-indexed as before; a missing path is forgotten (with everything under it, which covers a deleted folder) and `index:changed` is emitted; a directory is ignored as before. Editors that save by replacing the file therefore end with a normal re-index.
+
+### `App`
+
+- **Index a folder:** after the walk, entries not in the walk are removed before the job is enqueued. Together with the folder switch this keeps the index to exactly one folder.
+- **Startup** (`syncSavedFolder`, replacing `resumeWatcher`), after the engine is ready:
+  - no saved folder → remove entries whose files are missing (`MissingPaths`), persist if any;
+  - saved folder gone → forget the folder **and** empty the index (`store.Clear`, persist);
+  - otherwise, holding `indexMu`: `Scan`, `Reconcile`, apply `Remove` and `Adopt`, persist if anything changed, restart the watcher, then enqueue `Index` as an ordinary progress job (recent files high priority, the rest low). Nothing changed → no events, nothing shown.
+- The three enqueue paths (folder, stale rebuild, startup catch-up) share one helper, `enqueueIndexJob(dir string, paths []string)`.
+- **Automatic, no prompt.** Only new and changed files are processed, usually a few seconds; the status line reports it like any indexing run.
+
+### Events
+
+| Event | New? | Payload |
+|---|---|---|
+| `index:changed` | new | none; entries were removed outside an indexing job. The engine store refreshes `EngineStatus`. |
+
 ## Frontend (Svelte)
 
 ### Boot — `main.ts`
@@ -186,7 +229,8 @@ All styling uses tokens from `tokens.css` and follows DESIGN.md: one display ele
 | `GetSettings` fails at boot | Defaults applied, error logged to the console, app mounts. |
 | Clear during indexing | Button disabled. If a race still reaches Go, its error shows inline under Library. |
 | `store.gob` removal fails | Memory cleared. Inline error: "Index cleared, but the file couldn't be removed: ‹reason›". |
-| Saved folder missing on startup | `Folder` cleared and saved, logged. Library shows "No folder yet". |
+| Saved folder missing on startup | `Folder` cleared and saved, index emptied, logged. Library shows "No folder yet". |
+| Catch-up scan fails (folder unreadable) | Logged; the loaded index is kept and the watcher still starts. |
 | Folder switch then indexing fails | Existing `index:error` handling. The old index is already empty, as switching intends. |
 
 ## Testing
@@ -196,6 +240,8 @@ TDD: write each test first and watch it fail.
 **Go**
 - `settings`: missing file → defaults. Save and Load round trip. Corrupt JSON → `.bad` file plus defaults. Invalid theme or motion → `Validate` error and `Save` refuses. No `.tmp` left after `Save`.
 - `vectorstore`: `Clear` empties `Len` and `DocCount`. `Save` after `Clear` loads back empty.
+- `vectorstore` stamps: saved and loaded; an older file without stamps loads with none; `RemoveDocs` and `Clear` drop stamps; `RemoveUnder` removes a folder's files but not a sibling sharing its prefix.
+- `indexing.Reconcile`: table tests for missing, new, changed time, changed size, unchanged, unstamped before and after `savedAt`. `Scan` and `MissingPaths` against a temp dir. `Indexer.Forget` persists only when something was removed.
 - `App` helpers: `ClearIndex` returns an error while `indexMu` is held. `switchFolder` with a new folder clears and saves. With the same folder it doesn't clear or save.
 
 **Vitest**
@@ -216,4 +262,38 @@ TDD: write each test first and watch it fail.
 
 ## Known gaps
 
-- **Offline edits aren't caught up.** On startup the watcher resumes, but files changed while Spotfile was closed aren't re-indexed until they change again. A catch-up scan that compares modification times against the index is future work. Add it to `context/ROADMAP.md` follow-up gaps.
+- **New subfolders aren't watched until the next launch.** The watcher registers the folder tree when it starts; files added to a subfolder created afterwards are picked up by the startup catch-up.
+
+## Implementation notes
+
+Deviations from this design, made in the implementation plan:
+
+1. **Package location:** the settings package lives at `engine/settings`, not `settings/`. CI only runs `go test ./engine/...`, and package `main` tests would need a built `frontend/dist`.
+2. **Folder-reset logic:** it lives in `settings.WithFolder` (returns the new settings plus whether the folder changed). Clearing the index file lives in `vectorstore.Wipe` / `DiskSize`. `App` stays thin.
+3. **When a folder switch empties the index:** after the folder walk finds supported files. A folder with nothing to index leaves the old index alone.
+4. **Boot:** `main.ts` awaits `settings.load()` and then mounts, instead of calling a separate `applyAppearance`. The theme and motion stores stamp `<html>` during App init, before first paint.
+5. **Wording:** the Library figures say "files", matching the existing status line, not "documents".
+6. **Index sync:** stamps are recorded after a batch is embedded (stat taken before), so a store saved mid-batch never marks an unembedded file current. The folder walk is `indexing.Scan`, which counts only regular files, so symlinked files are no longer indexed. With a saved folder, a stale store (different embedding model) is rebuilt by the startup sync rather than `rebuildStaleIndex`.
+
+## Multiple folders
+
+*Added 2026-10-21. Replaces the one-folder model: adding a folder no longer empties the index.*
+
+### Behaviour
+
+- **Library** lists every indexed folder (middle-truncated path, its file count, **Remove…**) and one **Add folder…** button. With none: "No folder yet" and **Add folder…**. Search's folder button reads "Add folder".
+- **Add a folder:** the folder is walked and compared with what is indexed *under it* (`Reconcile`): new and changed files are indexed, gone ones dropped, unchanged ones skipped. The other folders are untouched. Re-adding an indexed folder is therefore a quick catch-up.
+  - Inside an indexed folder → already covered: the list doesn't change; its files are still caught up.
+  - Contains indexed folders → it replaces them in the list; their files stay indexed and aren't re-embedded.
+  - A folder with no supported files → error as before; nothing changes.
+- **Remove a folder** (`ConfirmDialog`: "Remove *Research* from search? Its N files leave the index. The files stay on disk."): its entries are dropped (`RemoveUnder`), the list and watcher updated, `index:changed` emitted. Refused while indexing.
+- **Startup:** each saved folder is caught up as above, in one progress job. A saved folder that no longer exists is removed from the list with its entries. Entries outside every saved folder are dropped — but only when at least one folder is saved, so an index from before folders were saved is kept (missing files are still dropped) until the first folder is added.
+- **Watcher:** one watcher over every saved folder's tree.
+- **Clear index** empties the index and keeps the folder list.
+
+### Data
+
+- `settings.json`: `"folders": ["/a", "/b"]` replaces `"folder"`. A file with the old `"folder"` loads as a one-item list and is saved in the new form.
+- `settings`: `Folders []string`; `WithFolderAdded(dir) (Settings, bool)` (the bool reports whether the list changed) and `WithFolderRemoved(dir) Settings`, both returning copies. Paths are compared cleaned; containment uses `pathutil.Within(path, dir)`, shared with `vectorstore.RemoveUnder`.
+- `EngineStatus.folders`: `[{ "path": "/a", "files": 12 }, …]` in list order, replacing `folder`.
+- `App.RemoveFolder(dir string) error`, new binding.

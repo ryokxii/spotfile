@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Unknown routes land on Search.
+  // Unknown routes land on the Dashboard.
   import { onMount } from 'svelte'
   import { replace } from 'svelte-spa-router'
 

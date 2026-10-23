@@ -8,8 +8,9 @@
   export let loading = false
   export let placeholder = 'Search your files…'
   export let folderTitle = 'Choose a folder to index'
+  export let filesTitle = 'Add files'
 
-  const dispatch = createEventDispatcher<{ submit: string; chooseFolder: void }>()
+  const dispatch = createEventDispatcher<{ submit: string; chooseFolder: void; chooseFiles: void }>()
 </script>
 
 <form class="bar" class:disabled role="search" on:submit|preventDefault={() => dispatch('submit', value)}>
@@ -28,6 +29,9 @@
   />
   <PressableSurface label={folderTitle} title={folderTitle} class="folder" on:click={() => dispatch('chooseFolder')}>
     <Icon name="folder" />
+  </PressableSurface>
+  <PressableSurface label={filesTitle} title={filesTitle} class="folder" on:click={() => dispatch('chooseFiles')}>
+    <Icon name="file" />
   </PressableSurface>
 </form>
 

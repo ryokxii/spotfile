@@ -10,10 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"spotfile/engine/activity"
 	"spotfile/engine/embedder"
 	"spotfile/engine/indexing"
 	"spotfile/engine/llamaserver"
 	"spotfile/engine/llm"
+	"spotfile/engine/settings"
+	"spotfile/engine/trash"
 	"spotfile/engine/vectorstore"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -29,6 +32,13 @@ type App struct {
 	indexer   *indexing.Indexer
 	watcher   *indexing.FileWatcher
 	llm       *llm.Model
+
+	settingsMu sync.Mutex // guards settings; may be taken while holding engMu, never the reverse
+	settings   settings.Settings
+
+	activityMu sync.Mutex // guards activity
+	activity   activity.Log
+	trasher    trash.Trasher
 }
 
 // recentWindow bounds which files are treated as "recent" and indexed at high
@@ -36,19 +46,24 @@ type App struct {
 const recentWindow = 7 * 24 * time.Hour
 
 func NewApp() *App {
-	return &App{store: new(vectorstore.VectorStore)}
+	store := new(vectorstore.VectorStore)
+	store.SetPersistPath(storePath())
+	return &App{store: store, settings: settings.Defaults(), activity: activity.Empty(), trasher: trash.System{}}
 }
 
-// startup auto-initialises the engine with platform defaults so users
-// don't have to configure anything before indexing.
+// startup loads settings, then auto-initialises the engine with platform
+// defaults so users don't have to configure anything before indexing.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.loadSettings()
+	a.loadActivity()
 	go func() {
 		if err := a.InitEngine(EngineConfig{}); err != nil {
 			wailsruntime.EventsEmit(ctx, "engine:error", err.Error())
 			return
 		}
 		wailsruntime.EventsEmit(ctx, "engine:ready", nil)
+		a.syncSavedRoots()
 	}()
 }
 
@@ -83,10 +98,13 @@ func (a *App) context() context.Context {
 // changes; this lets a freshly loaded UI catch up on anything it missed, such as
 // an engine:ready emitted before its listeners were registered.
 type EngineStatus struct {
-	Ready     bool   `json:"ready"`
-	Error     string `json:"error"`
-	Documents int    `json:"documents"`
-	Chunks    int    `json:"chunks"`
+	Ready      bool         `json:"ready"`
+	Error      string       `json:"error"`
+	Documents  int          `json:"documents"`
+	Chunks     int          `json:"chunks"`
+	Folders    []FolderStat `json:"folders"`    // the saved indexed folders
+	Files      []string     `json:"files"`      // individually indexed files
+	IndexBytes int64        `json:"indexBytes"` // size of the index file on disk
 }
 
 // EngineStatus reports whether the embedding engine is running, the last
@@ -95,14 +113,34 @@ func (a *App) EngineStatus() EngineStatus {
 	a.engMu.Lock()
 	defer a.engMu.Unlock()
 	status := EngineStatus{
-		Ready:     a.embedder != nil,
-		Documents: a.store.DocCount(),
-		Chunks:    a.store.Len(),
+		Ready:      a.embedder != nil,
+		Documents:  a.store.DocCount(),
+		Chunks:     a.store.Len(),
+		Folders:    a.folderStats(),
+		Files:      a.GetSettings().Files,
+		IndexBytes: a.store.DiskSize(),
 	}
 	if a.engineErr != nil {
 		status.Error = a.engineErr.Error()
 	}
 	return status
+}
+
+// FolderStat is an indexed folder and how many of its files are indexed.
+type FolderStat struct {
+	Path  string `json:"path"`
+	Files int    `json:"files"`
+}
+
+// folderStats counts the indexed files in each saved folder, in list order.
+func (a *App) folderStats() []FolderStat {
+	folders := a.GetSettings().Folders
+	stats := make([]FolderStat, len(folders))
+	indexed := a.store.Stamps()
+	for i, f := range folders {
+		stats[i] = FolderStat{Path: f, Files: len(indexing.StampsUnder(indexed, f))}
+	}
+	return stats
 }
 
 // EngineConfig is the payload for initialising the engine.
@@ -186,7 +224,9 @@ func (a *App) initEngineLocked(cfg EngineConfig) (err error) {
 
 	// Background indexer drains prioritized work on a single worker.
 	a.indexer = indexing.NewIndexer(a.context(), a.embedder, a.store)
-	if len(stalePaths) > 0 {
+	// With a saved folder, the startup sync re-indexes it from scratch (the stale
+	// store loaded nothing), so only folderless indexes need the rebuild.
+	if len(stalePaths) > 0 && len(a.GetSettings().Roots()) == 0 {
 		go a.rebuildStaleIndex(stalePaths)
 	}
 
@@ -198,6 +238,15 @@ func (a *App) initEngineLocked(cfg EngineConfig) (err error) {
 func (a *App) SelectFolder() (string, error) {
 	return wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
 		Title: "Choose a folder to index",
+	})
+}
+
+// SelectFiles opens a native picker for one or more supported files and
+// returns their paths, or none if the user cancels.
+func (a *App) SelectFiles() ([]string, error) {
+	return wailsruntime.OpenMultipleFilesDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title:   "Choose files to index",
+		Filters: []wailsruntime.FileFilter{{DisplayName: "Supported files", Pattern: indexablePattern()}},
 	})
 }
 

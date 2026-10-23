@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -35,6 +36,16 @@ var indexableExtensions = map[string]bool{
 	".rb": true, ".rs": true, ".java": true, ".kt": true, ".c": true, ".h": true,
 	".cpp": true, ".hpp": true, ".cc": true, ".cs": true, ".php": true, ".swift": true,
 	".sh": true, ".bash": true, ".zsh": true, ".sql": true,
+}
+
+// indexablePattern is the file-picker filter for the indexed types: "*.pdf;*.md;…".
+func indexablePattern() string {
+	patterns := make([]string, 0, len(indexableExtensions))
+	for ext := range indexableExtensions {
+		patterns = append(patterns, "*"+ext)
+	}
+	sort.Strings(patterns)
+	return strings.Join(patterns, ";")
 }
 
 // isIndexable reports whether a path's extension is one Spotfile indexes.

@@ -53,3 +53,18 @@ func TestVectorStoreDocCount(t *testing.T) {
 		t.Fatalf("after RemoveDoc, DocCount = %d, want 1", got)
 	}
 }
+func TestVectorStoreClear(t *testing.T) {
+	store := new(VectorStore)
+	store.Add(EmbeddedChunk{DocPath: "a.md", Embedding: []float32{1, 0}})
+	store.Add(EmbeddedChunk{DocPath: "b.md", Embedding: []float32{0, 1}})
+
+	store.Clear()
+	if store.Len() != 0 || store.DocCount() != 0 {
+		t.Fatalf("after Clear: Len=%d DocCount=%d, want 0", store.Len(), store.DocCount())
+	}
+
+	store.Add(EmbeddedChunk{DocPath: "c.md", Embedding: []float32{1, 0}})
+	if store.DocCount() != 1 {
+		t.Fatalf("store unusable after Clear: DocCount=%d", store.DocCount())
+	}
+}

@@ -2,7 +2,9 @@ package vectorstore
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -16,6 +18,7 @@ type storeFile struct {
 	Version  int
 	Embedder string
 	Docs     map[string][]EmbeddedChunk
+	Stamps   map[string]Stamp // absent in files written before stamps; gob leaves it nil
 }
 
 // StaleError reports a store on disk that cannot be used with the current
@@ -57,6 +60,37 @@ func (vs *VectorStore) Persist() error {
 	return vs.Save(path)
 }
 
+// Wipe empties the store and deletes its persisted file. The store is emptied
+// even when the file can't be removed.
+func (vs *VectorStore) Wipe() error {
+	vs.Clear()
+	vs.mu.RLock()
+	path := vs.persistPath
+	vs.mu.RUnlock()
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove index file: %w", err)
+	}
+	return nil
+}
+
+// DiskSize is the size in bytes of the persisted file, or 0 when there is none.
+func (vs *VectorStore) DiskSize() int64 {
+	vs.mu.RLock()
+	path := vs.persistPath
+	vs.mu.RUnlock()
+	if path == "" {
+		return 0
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0
+	}
+	return info.Size()
+}
+
 // Save gob-encodes the store to path via a temp file + atomic rename, so a
 // crash mid-write can never leave a truncated store on disk.
 func (vs *VectorStore) Save(path string) error {
@@ -68,6 +102,10 @@ func (vs *VectorStore) Save(path string) error {
 		copy(cp, chunks) // decouple slice from concurrent appends; embeddings are never mutated in place
 		snapshot[k] = cp
 	}
+	stamps := make(map[string]Stamp, len(vs.stamps))
+	for k, s := range vs.stamps {
+		stamps[k] = s
+	}
 	vs.mu.RUnlock()
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".store-*.tmp")
@@ -77,7 +115,7 @@ func (vs *VectorStore) Save(path string) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op once the rename succeeds
 
-	file := storeFile{Version: formatVersion, Embedder: embedder, Docs: snapshot}
+	file := storeFile{Version: formatVersion, Embedder: embedder, Docs: snapshot, Stamps: stamps}
 	if err := gob.NewEncoder(tmp).Encode(file); err != nil {
 		tmp.Close()
 		return fmt.Errorf("encode store: %w", err)
@@ -109,6 +147,7 @@ func (vs *VectorStore) Load(path string) error {
 		}
 	}
 	vs.docs = file.Docs
+	vs.stamps = file.Stamps
 	return nil
 }
 
